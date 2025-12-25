@@ -1,0 +1,7 @@
+{
+  "name": "Excel 订单解析器",
+  "description": "一个用于解析 Excel 文件并将订单详情（任务名称、业务号、班组、姓名、串码）提取为结构化格式的工具。",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
