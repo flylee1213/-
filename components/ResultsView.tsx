@@ -1,8 +1,9 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Order, User, OrderStatus, ReturnReason } from '../types';
 import { Button } from './Button';
-import { Download, Search, RotateCcw, CheckCircle2, UserCircle, ArrowRightLeft, CheckSquare, Camera, Mic, X, Image as ImageIcon, Aperture } from 'lucide-react';
+import { Download, Search, RotateCcw, CheckCircle2, UserCircle, ArrowRightLeft, CheckSquare, Camera, Mic, X, Image as ImageIcon, Aperture, ScanLine, BrainCircuit, Filter } from 'lucide-react';
 import ExcelJS from 'exceljs';
+import { GoogleGenAI } from "@google/genai";
 
 interface ResultsViewProps {
   orders: Order[];
@@ -11,8 +12,82 @@ interface ResultsViewProps {
   onUpdateOrder: (orderId: string, updates: Partial<Order>) => void;
 }
 
+// --- STRICT JS COMPARISON LOGIC ---
+const normalizeString = (str: string) => {
+  return str.toUpperCase().replace(/[^A-Z0-9]/g, '');
+};
+
+// OCR Ambiguity Whitelist (Strict)
+// Only these pairs are allowed to be swapped.
+const ALLOWED_SWAPS: Record<string, string[]> = {
+  '0': ['O', 'Q', 'D'],
+  'O': ['0', 'Q', 'D'],
+  'Q': ['0', 'O'],
+  'D': ['0', 'O'],
+  '8': ['B'],
+  'B': ['8'],
+  'Z': ['2'],
+  '2': ['Z'],
+  '1': ['I', 'L'],
+  'I': ['1', 'L'],
+  'L': ['1', 'I'],
+  '5': ['S'],
+  'S': ['5'],
+  // Note: '6', '9', '7', 'E' generally do not have safe alphanumeric swaps in this context.
+  // '7' vs '2' is NOT here, so it will FAIL.
+};
+
+const strictCompare = (target: string, candidate: string): { match: boolean; reason: string; score: number } => {
+  const normTarget = normalizeString(target);
+  const normCand = normalizeString(candidate);
+
+  // 1. Length Check (Allow max 1 char difference, usually OCR drops a char)
+  if (Math.abs(normTarget.length - normCand.length) > 1) {
+    return { match: false, reason: `长度不符 (目标:${normTarget.length}, 识别:${normCand.length})`, score: 0 };
+  }
+
+  let diffCount = 0;
+  const length = Math.min(normTarget.length, normCand.length);
+  const diffDetails = [];
+
+  for (let i = 0; i < length; i++) {
+    const charT = normTarget[i];
+    const charC = normCand[i];
+
+    if (charT !== charC) {
+      // Check Whitelist
+      const allowed = ALLOWED_SWAPS[charT];
+      if (allowed && allowed.includes(charC)) {
+        // It's a fuzzy match (e.g. 8 vs B), we count it but allow it
+        diffCount += 0.5; // Penalty for fuzzy match
+        diffDetails.push(`Pos ${i+1}: '${charC}'视为'${charT}'`);
+      } else {
+        // HARD MISMATCH (e.g. 7 vs 2, 6 vs 8)
+        return { 
+          match: false, 
+          reason: `字符不匹配: 第${i+1}位 识别为'${charC}'，应为'${charT}' (严禁匹配)`, 
+          score: 0 
+        };
+      }
+    }
+  }
+
+  // Max fuzzy allowance: equivalent to 2 fuzzy chars (score 1.0)
+  if (diffCount > 1.0) {
+    return { match: false, reason: `模糊匹配过多 (${diffDetails.join(', ')})`, score: 0 };
+  }
+
+  return { 
+    match: true, 
+    reason: diffCount === 0 ? "完全精确匹配" : `模糊匹配成功: ${diffDetails.join(', ')}`, 
+    score: 1 
+  };
+};
+
 export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, onReset, onUpdateOrder }) => {
   const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<OrderStatus | 'ALL'>('ALL');
+  const [teamFilter, setTeamFilter] = useState<string>('ALL');
   const [isExporting, setIsExporting] = useState(false);
 
   // Transfer Modal State
@@ -33,6 +108,20 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
   const nativeInputRef = useRef<HTMLInputElement>(null); // Ref for native file input
   const [cameraError, setCameraError] = useState<string | null>(null);
 
+  // AI Verification State
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [verificationResult, setVerificationResult] = useState<{
+    match: boolean;
+    detected: string;
+    message: string;
+  } | null>(null);
+
+  // Extract unique teams for dropdown
+  const uniqueTeams = useMemo(() => {
+    const teams = new Set(orders.map(o => o.team).filter(Boolean));
+    return Array.from(teams).sort();
+  }, [orders]);
+
   const filteredOrders = useMemo(() => {
     const lowerTerm = searchTerm.toLowerCase().trim();
     
@@ -42,14 +131,21 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
       visibleOrders = orders.filter(o => o.userName === currentUser.name);
     }
 
-    if (!lowerTerm) return visibleOrders;
-
-    // Filter by Search
-    const results = visibleOrders.filter(order => 
-      Object.values(order).some(val => 
+    // Filter Logic
+    const results = visibleOrders.filter(order => {
+      // 1. Search Term
+      const matchesSearch = !lowerTerm || Object.values(order).some(val => 
         String(val).toLowerCase().includes(lowerTerm)
-      )
-    );
+      );
+
+      // 2. Status Filter
+      const matchesStatus = statusFilter === 'ALL' || order.status === statusFilter;
+
+      // 3. Team Filter
+      const matchesTeam = teamFilter === 'ALL' || order.team === teamFilter;
+
+      return matchesSearch && matchesStatus && matchesTeam;
+    });
 
     // Sort
     return results.sort((a, b) => {
@@ -59,7 +155,116 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
       if (bTask === lowerTerm && aTask !== lowerTerm) return 1;
       return 0;
     });
-  }, [orders, searchTerm, currentUser]);
+  }, [orders, searchTerm, currentUser, statusFilter, teamFilter]);
+
+  // --- AI Verification Logic (Architecture: AI OCR -> JS Judge) ---
+  const verifyImageWithAI = async () => {
+    if (!photoData || !completionTarget) return;
+
+    setIsVerifying(true);
+    setVerificationResult(null);
+
+    try {
+      const apiKey = process.env.API_KEY;
+      if (!apiKey) throw new Error("未配置 API Key");
+
+      const ai = new GoogleGenAI({ apiKey });
+      const base64Data = photoData.split(',')[1];
+      const targetCode = completionTarget.serialCode;
+
+      // New Prompt: Pure OCR Extraction. No judgment.
+      const promptText = `
+        Task: Extract all alphanumeric strings found in this image.
+        
+        Instructions:
+        1. Look for strings that resemble Serial Numbers, MAC addresses, Device IDs, or Barcodes.
+        2. Ignore labels like "MAC:", "SN:", "Model:". Just return the values.
+        3. Be precise. Do not correct spelling. Return exactly what you see.
+        4. Return a JSON object with an array of strings.
+
+        Output Format:
+        {
+          "candidates": ["string1", "string2", "string3"]
+        }
+      `;
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-image', // Fast and good at OCR
+        contents: {
+          parts: [
+            { inlineData: { mimeType: 'image/jpeg', data: base64Data } },
+            { text: promptText }
+          ]
+        },
+        config: {
+          temperature: 0.1, // Low temp for precision
+        }
+      });
+
+      const responseText = response.text || "{}";
+      console.log("AI OCR Response:", responseText);
+
+      // 1. Parse AI Output
+      let candidates: string[] = [];
+      try {
+        const jsonString = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
+        const parsed = JSON.parse(jsonString);
+        candidates = parsed.candidates || [];
+      } catch (e) {
+        console.warn("JSON Parse Failed", e);
+        // Fallback: simple regex extraction if JSON fails
+        const matches = responseText.match(/[A-Z0-9\-\:]{6,}/gi);
+        if (matches) candidates = Array.from(matches);
+      }
+
+      if (candidates.length === 0) {
+        setVerificationResult({
+          match: false,
+          detected: "未检测到文字",
+          message: "无法从图片中识别出任何有效的字母数字串。"
+        });
+        return;
+      }
+
+      // 2. Strict JS Comparison
+      let bestMatch = { match: false, reason: "未找到匹配项", score: -1, detected: "" };
+      
+      for (const cand of candidates) {
+        const result = strictCompare(targetCode, cand);
+        
+        // Prioritize: True Match > Higher Fuzzy Score > Anything else
+        if (result.match) {
+          bestMatch = { ...result, detected: cand };
+          break; // Stop on first valid match
+        } else {
+          // Keep track of the "closest" failure for debugging feedback
+          // Heuristic: If it failed but had a specific reason (not length mismatch), it might be the right code scanned incorrectly
+          if (!result.reason.includes("长度") && bestMatch.score === -1) {
+             bestMatch = { ...result, detected: cand };
+          }
+        }
+      }
+
+      // 3. Set Result
+      setVerificationResult({
+        match: bestMatch.match,
+        detected: bestMatch.detected || candidates[0], // Show what we tried
+        message: bestMatch.match 
+          ? bestMatch.reason 
+          : `匹配失败: ${bestMatch.reason || "图片中的文字与订单不符"}`
+      });
+
+    } catch (error: any) {
+      console.error("AI Verification Error:", error);
+      setVerificationResult({
+        match: false,
+        detected: "Error",
+        message: `服务错误: ${error.message || "请重试"}`
+      });
+    } finally {
+      setIsVerifying(false);
+    }
+  };
 
   // --- Camera Logic (Web RTC) ---
   const startCamera = async () => {
@@ -108,6 +313,8 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
         // Convert to Base64 (JPEG 0.8 quality)
         const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
         setPhotoData(dataUrl);
+        // Clear previous AI result when new photo is taken
+        setVerificationResult(null); 
         stopCamera();
       }
     }
@@ -135,6 +342,8 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
              
              const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
              setPhotoData(dataUrl);
+             // Clear previous AI result
+             setVerificationResult(null); 
            }
         };
         img.src = event.target?.result as string;
@@ -322,6 +531,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
     setReturnReason(order.returnReason || '');
     setRemark(order.completionRemark || '');
     setPhotoData(order.completionPhoto || null);
+    setVerificationResult(null); // Reset AI result
     // Note: We don't preload audio data for display simplicity, but could if needed
     setAudioData(null); 
   };
@@ -333,6 +543,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
     setRemark('');
     setPhotoData(null);
     setAudioData(null);
+    setVerificationResult(null);
   };
 
   const submitCompletion = () => {
@@ -349,15 +560,20 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
     }
 
     const currentHistory = Array.isArray(completionTarget.history) ? completionTarget.history : [];
+    
+    // Add AI verification note to history if performed
+    const verificationNote = verificationResult 
+      ? `(AI核对: ${verificationResult.match ? '通过' : '失败'} - 识别为 ${verificationResult.detected})` 
+      : '';
 
     onUpdateOrder(completionTarget.id, {
       status: 'COMPLETED',
       completedAt: new Date().toISOString(),
       returnReason: returnReason as ReturnReason,
-      completionRemark: remark,
+      completionRemark: remark + (remark && verificationNote ? ' ' : '') + verificationNote,
       completionPhoto: photoData || undefined,
       completionAudio: audioData?.data || undefined,
-      history: [...currentHistory, `${currentUser.name} 于 ${new Date().toLocaleString()} 完成回单`]
+      history: [...currentHistory, `${currentUser.name} 于 ${new Date().toLocaleString()} 完成回单 ${verificationNote}`]
     });
 
     closeCompletionModal();
@@ -463,9 +679,28 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
 
               {/* 3. Photo with Watermark */}
               <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-2">
-                  3. 现场拍照 (带时间水印)
-                </label>
+                <div className="flex justify-between items-center mb-2">
+                  <label className="block text-sm font-semibold text-slate-700">
+                    3. 现场拍照 (带时间水印)
+                  </label>
+                  {/* AI Verify Button (Only show if photo exists and we are editing) */}
+                  {canEditCompletion && photoData && (
+                    <button 
+                      onClick={verifyImageWithAI}
+                      disabled={isVerifying}
+                      className="text-xs flex items-center gap-1 bg-indigo-50 text-indigo-700 px-2 py-1 rounded-full border border-indigo-200 hover:bg-indigo-100 transition-colors disabled:opacity-50"
+                    >
+                      {isVerifying ? (
+                        <span className="animate-pulse">AI 识别中...</span>
+                      ) : (
+                        <>
+                          <BrainCircuit size={14} />
+                          智能核对串码
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
                 
                 {/* Native Input Hidden */}
                 <input 
@@ -508,20 +743,44 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
                   </div>
                 )}
 
-                {/* Photo Display - Show if photo exists (editing or viewing) */}
+                {/* Photo Display */}
                 {photoData ? (
-                  <div className="relative group bg-slate-900 rounded-lg overflow-hidden h-64 flex items-center justify-center">
-                    <img 
-                      src={photoData} 
-                      alt="Captured" 
-                      className="max-h-full max-w-full object-contain" 
-                    />
-                    {canEditCompletion && (
-                        <div className="absolute inset-0 bg-black/40 hidden group-hover:flex items-center justify-center gap-2 transition-all">
-                        <Button onClick={() => setPhotoData(null)} variant="secondary" className="text-xs">
-                            重拍
-                        </Button>
+                  <div className="space-y-2">
+                    <div className="relative group bg-slate-900 rounded-lg overflow-hidden h-64 flex items-center justify-center">
+                      <img 
+                        src={photoData} 
+                        alt="Captured" 
+                        className="max-h-full max-w-full object-contain" 
+                      />
+                      {canEditCompletion && (
+                          <div className="absolute inset-0 bg-black/40 hidden group-hover:flex items-center justify-center gap-2 transition-all">
+                          <Button onClick={() => setPhotoData(null)} variant="secondary" className="text-xs">
+                              重拍
+                          </Button>
+                          </div>
+                      )}
+                    </div>
+                    
+                    {/* AI Verification Result Alert */}
+                    {verificationResult && (
+                      <div className={`p-3 rounded-lg text-sm flex items-start gap-2 border ${
+                        verificationResult.match 
+                          ? 'bg-green-50 border-green-200 text-green-800' 
+                          : 'bg-red-50 border-red-200 text-red-800'
+                      }`}>
+                        {verificationResult.match ? (
+                          <CheckCircle2 size={18} className="shrink-0 mt-0.5" />
+                        ) : (
+                          <ScanLine size={18} className="shrink-0 mt-0.5" />
+                        )}
+                        <div>
+                          <p className="font-bold">{verificationResult.match ? "匹配成功" : "匹配失败/未识别"}</p>
+                          <p>{verificationResult.message}</p>
+                          {!verificationResult.match && verificationResult.detected !== 'Error' && (
+                             <p className="mt-1 text-xs opacity-80">识别结果: {verificationResult.detected}</p>
+                          )}
                         </div>
+                      </div>
                     )}
                   </div>
                 ) : (
@@ -531,7 +790,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
                         </div>
                     )
                 )}
-                {/* Show Camera Error but offer Native fallback */}
+                
                 {cameraError && (
                     <div className="mt-2 text-sm text-red-500 bg-red-50 p-2 rounded flex flex-col gap-2">
                         <p>{cameraError}</p>
@@ -635,27 +894,61 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
       {/* Main Content Area */}
       <div className="bg-white rounded-xl shadow-lg border border-slate-200 flex flex-col h-[calc(100vh-250px)] min-h-[600px]">
         {/* Toolbar */}
-        <div className="p-4 border-b border-slate-100 flex flex-col md:flex-row justify-between items-center gap-4 bg-slate-50">
-          <div className="relative w-full md:w-96">
-            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <Search size={18} className="text-slate-400" />
+        <div className="p-4 border-b border-slate-100 flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 bg-slate-50">
+          
+          {/* Search & Filters Group */}
+          <div className="flex flex-col md:flex-row gap-3 w-full xl:w-auto flex-1">
+            <div className="relative flex-1 min-w-[200px]">
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <Search size={18} className="text-slate-400" />
+              </div>
+              <input
+                type="text"
+                placeholder="搜索任务名称、业务号..."
+                className="pl-10 w-full p-2 bg-white border border-slate-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
             </div>
-            <input
-              type="text"
-              placeholder="搜索任务名称、业务号..."
-              className="pl-10 w-full p-2 bg-white border border-slate-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
+
+            {/* Filter Dropdowns */}
+            <div className="flex gap-2">
+                <div className="relative">
+                   <select 
+                        value={statusFilter} 
+                        onChange={e => setStatusFilter(e.target.value as any)}
+                        className="appearance-none pl-8 pr-8 py-2 border border-slate-300 rounded-md text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 min-w-[120px]"
+                    >
+                        <option value="ALL">全部状态</option>
+                        <option value="PENDING">待派发</option>
+                        <option value="DISPATCHED">待接收</option>
+                        <option value="RECEIVED">处理中</option>
+                        <option value="COMPLETED">已完成</option>
+                    </select>
+                    <Filter size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                </div>
+
+                <div className="relative">
+                    <select 
+                        value={teamFilter} 
+                        onChange={e => setTeamFilter(e.target.value)}
+                        className="appearance-none pl-8 pr-8 py-2 border border-slate-300 rounded-md text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 min-w-[120px]"
+                    >
+                        <option value="ALL">全部班组</option>
+                        {uniqueTeams.map(t => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                    <UserCircle size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                </div>
+            </div>
           </div>
           
-          <div className="flex gap-3 w-full md:w-auto">
+          <div className="flex gap-3 w-full xl:w-auto">
              {currentUser.role === 'ADMIN' && (
-                <Button variant="outline" onClick={onReset} className="flex-1 md:flex-none">
+                <Button variant="outline" onClick={onReset} className="flex-1 xl:flex-none whitespace-nowrap">
                   <RotateCcw size={16} className="mr-2" /> 导入新数据
                 </Button>
              )}
-             <Button onClick={handleExport} className="flex-1 md:flex-none" isLoading={isExporting}>
+             <Button onClick={handleExport} className="flex-1 xl:flex-none whitespace-nowrap" isLoading={isExporting}>
                <Download size={16} className="mr-2" /> 导出 Excel
              </Button>
           </div>
@@ -766,6 +1059,11 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
                    ? `未找到属于 "${currentUser.name}" 的订单` 
                    : `未找到匹配 "${searchTerm}" 的订单`}
                </p>
+               {(statusFilter !== 'ALL' || teamFilter !== 'ALL') && (
+                   <p className="mt-2 text-xs text-slate-500">
+                       (已应用筛选条件: {statusFilter !== 'ALL' ? '状态 ' : ''}{teamFilter !== 'ALL' ? '班组' : ''})
+                   </p>
+               )}
              </div>
           )}
         </div>
