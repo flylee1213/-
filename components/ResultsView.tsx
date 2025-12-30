@@ -190,8 +190,9 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
         }
       `;
 
+      // 使用通用 Flash 模型进行 OCR，支持多模态输入，且配额通常更宽松
       const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-image', // Fast and good at OCR
+        model: 'gemini-3-flash-preview', 
         contents: {
           parts: [
             { inlineData: { mimeType: 'image/jpeg', data: base64Data } },
@@ -223,7 +224,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
         setVerificationResult({
           match: false,
           detected: "未检测到文字",
-          message: "无法从图片中识别出任何有效的字母数字串。"
+          message: "无法从图片中识别出任何有效的字母数字串，请尝试更清晰的角度。"
         });
         return;
       }
@@ -259,10 +260,17 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
     } catch (error: any) {
       console.error("AI Verification Error:", error);
       const isKeyError = error.message.includes("API Key");
+      // Detect Rate Limit / Quota errors
+      const isQuotaError = error.message.includes("429") || error.message.includes("quota") || error.message.includes("RESOURCE_EXHAUSTED");
+      
+      let msg = `服务错误: ${error.message || "请重试"}`;
+      if (isKeyError) msg = "请配置 API Key (.env)";
+      if (isQuotaError) msg = "请求过于频繁(429)。请等待约 1 分钟后再试，或检查配额。";
+
       setVerificationResult({
         match: false,
-        detected: "系统错误",
-        message: isKeyError ? "请配置 API Key (.env)" : `服务错误: ${error.message || "请重试"}`
+        detected: isQuotaError ? "配额超限" : "系统错误",
+        message: msg
       });
     } finally {
       setIsVerifying(false);
