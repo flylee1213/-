@@ -436,50 +436,80 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
   };
 
   const addWatermarkToCanvas = (canvas: HTMLCanvasElement) => {
-    const context = canvas.getContext('2d');
-    if (!context) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
     
-    // Config
-    const fontSize = Math.max(24, Math.floor(canvas.width * 0.035));
-    const padding = fontSize * 0.5;
+    const width = canvas.width;
+    const height = canvas.height;
+    
+    // 动态调整字体大小：基于宽度的 3.5%，但不小于 16px，不大于 60px
+    // 这样在低分辨率预览和高分辨率拍摄时都能看清
+    const fontSize = Math.max(16, Math.min(60, Math.floor(width * 0.035)));
     const lineHeight = fontSize * 1.3;
-    
-    // Content
+    const padding = fontSize * 0.6; // 内边距
+    const margin = fontSize * 0.6;  // 距离边缘的距离 (防裁剪)
+
+    // 准备文本内容
     const now = new Date();
-    const timeString = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
-    const locationString = locationText || "位置获取中...";
+    const timeStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+    const addrStr = locationText || "位置信息获取中...";
 
-    context.font = `bold ${fontSize}px monospace`;
-    context.textBaseline = 'bottom';
+    ctx.font = `bold ${fontSize}px sans-serif`;
     
-    // Measure Texts
-    const timeMetrics = context.measureText(timeString);
-    const locMetrics = context.measureText(locationString);
-    const maxWidth = Math.max(timeMetrics.width, locMetrics.width);
+    // --- 文本换行逻辑 ---
+    // 最大文本宽度 = 画布宽度 - 两侧外边距 - 两侧内边距
+    // 确保文字不会超出画布宽度
+    const maxTextWidth = width - (margin * 2) - (padding * 2);
     
-    // Positions (Bottom Right)
-    const x = canvas.width - maxWidth - (padding * 2);
-    const yBottom = canvas.height - padding;
-    // Box height covers 2 lines + padding
-    const boxHeight = (lineHeight * 2) + padding;
+    // 拆分地址字符串（支持中文自动换行）
+    const addressLines: string[] = [];
+    let currentLine = '';
     
-    // Draw Background Box
-    context.fillStyle = 'rgba(0, 0, 0, 0.5)';
-    context.fillRect(
-      x - padding, 
-      yBottom - boxHeight, 
-      maxWidth + (padding * 2), 
-      boxHeight + padding
-    );
+    for (const char of addrStr) {
+        const testLine = currentLine + char;
+        const metrics = ctx.measureText(testLine);
+        if (metrics.width > maxTextWidth && currentLine !== '') {
+            addressLines.push(currentLine);
+            currentLine = char;
+        } else {
+            currentLine = testLine;
+        }
+    }
+    addressLines.push(currentLine);
 
-    // Draw Text (White)
-    context.fillStyle = '#ffffff';
-    
-    // Draw Location (First line)
-    context.fillText(locationString, x, yBottom - lineHeight);
-    
-    // Draw Time (Second line)
-    context.fillText(timeString, x, yBottom);
+    // 计算盒子尺寸
+    let maxContentWidth = ctx.measureText(timeStr).width;
+    for (const line of addressLines) {
+        const m = ctx.measureText(line);
+        if (m.width > maxContentWidth) maxContentWidth = m.width;
+    }
+
+    const boxWidth = maxContentWidth + (padding * 2);
+    // 总高度 = 地址行数 * 行高 + 时间行高 + 内边距 * 2 + 额外间隔
+    const boxHeight = (addressLines.length * lineHeight) + lineHeight + (padding * 2) + (lineHeight * 0.2);
+
+    // 定位：右下角
+    const x = width - boxWidth - margin;
+    const y = height - boxHeight - margin;
+
+    // 绘制半透明背景框
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.fillRect(x, y, boxWidth, boxHeight);
+
+    // 绘制文本
+    ctx.fillStyle = '#ffffff';
+    ctx.textBaseline = 'top';
+
+    // 绘制地址（多行）
+    let currentY = y + padding;
+    for (const line of addressLines) {
+        ctx.fillText(line, x + padding, currentY);
+        currentY += lineHeight;
+    }
+
+    // 绘制时间（最后一行，加一点间距）
+    currentY += (lineHeight * 0.2);
+    ctx.fillText(timeStr, x + padding, currentY);
   };
 
   const handleAudioImport = (e: React.ChangeEvent<HTMLInputElement>) => {
