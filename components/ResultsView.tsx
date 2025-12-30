@@ -166,7 +166,9 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
 
     try {
       const apiKey = process.env.API_KEY;
-      if (!apiKey) throw new Error("未配置 API Key");
+      if (!apiKey || apiKey.trim() === '') {
+         throw new Error("未配置 API Key。请在根目录 .env 文件中配置 API_KEY，或联系管理员。");
+      }
 
       const ai = new GoogleGenAI({ apiKey });
       const base64Data = photoData.split(',')[1];
@@ -256,10 +258,11 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
 
     } catch (error: any) {
       console.error("AI Verification Error:", error);
+      const isKeyError = error.message.includes("API Key");
       setVerificationResult({
         match: false,
-        detected: "Error",
-        message: `服务错误: ${error.message || "请重试"}`
+        detected: "系统错误",
+        message: isKeyError ? "请配置 API Key (.env)" : `服务错误: ${error.message || "请重试"}`
       });
     } finally {
       setIsVerifying(false);
