@@ -7,8 +7,8 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react()],
     define: {
-      // Map VITE_GEMINI_API_KEY to process.env.API_KEY for the SDK
-      'process.env.API_KEY': JSON.stringify(env.VITE_GEMINI_API_KEY),
+      // Map standard API_KEY (provided by system/environment) or VITE_GEMINI_API_KEY to process.env.API_KEY
+      'process.env.API_KEY': JSON.stringify(env.API_KEY || env.VITE_GEMINI_API_KEY),
     },
   };
 });
