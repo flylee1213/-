@@ -279,8 +279,11 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
       }
     } catch (err) {
       console.error("Camera Error:", err);
-      // Don't close camera state immediately, show error and option to use system camera
-      setCameraError("无法访问网页相机 (可能是权限或HTTPS问题)。请尝试下方“调用系统相机”按钮。");
+      // For Workers, we don't suggest system camera as fallback to enforce "No Album"
+      const errorMsg = currentUser.role === 'WORKER' 
+        ? "无法访问网页相机。请检查浏览器权限，或确认已使用 HTTPS 访问。执行人员仅允许使用实时相机。" 
+        : "无法访问网页相机 (可能是权限或HTTPS问题)。请尝试下方“调用系统相机”按钮。";
+      setCameraError(errorMsg);
     }
   };
 
@@ -714,18 +717,24 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
 
                 {/* Camera Trigger - Only show if editing and no photo yet, or if camera open */}
                 {canEditCompletion && !isCameraOpen && !photoData && (
-                  <div className="grid grid-cols-2 gap-4">
-                     {/* Standard Web Camera */}
+                  <div className={`grid gap-4 ${currentUser.role === 'WORKER' ? 'grid-cols-1' : 'grid-cols-2'}`}>
+                     {/* Standard Web Camera - Always Available */}
                      <Button onClick={startCamera} variant="outline" className="h-32 flex flex-col gap-2 border-dashed">
                        <Camera size={32} />
                        <span>打开网页相机</span>
+                       {currentUser.role === 'WORKER' && (
+                         <span className="text-[10px] text-slate-400">请使用实时拍照</span>
+                       )}
                      </Button>
-                     {/* Native Camera (Fallback) */}
-                     <Button onClick={() => nativeInputRef.current?.click()} variant="outline" className="h-32 flex flex-col gap-2 border-dashed bg-slate-50 hover:bg-slate-100">
-                       <Aperture size={32} className="text-blue-600" />
-                       <span>调用系统相机</span>
-                       <span className="text-[10px] text-slate-400">推荐(兼容性好)</span>
-                     </Button>
+                     
+                     {/* Native Camera (Fallback) - HIDDEN FOR WORKERS to prevent album import */}
+                     {currentUser.role !== 'WORKER' && (
+                       <Button onClick={() => nativeInputRef.current?.click()} variant="outline" className="h-32 flex flex-col gap-2 border-dashed bg-slate-50 hover:bg-slate-100">
+                         <Aperture size={32} className="text-blue-600" />
+                         <span>调用系统相机</span>
+                         <span className="text-[10px] text-slate-400">推荐(兼容性好)</span>
+                       </Button>
+                     )}
                   </div>
                 )}
 
@@ -794,13 +803,16 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
                 {cameraError && (
                     <div className="mt-2 text-sm text-red-500 bg-red-50 p-2 rounded flex flex-col gap-2">
                         <p>{cameraError}</p>
-                        <Button 
-                            variant="outline" 
-                            onClick={() => nativeInputRef.current?.click()}
-                            className="bg-white border-red-200 text-red-600"
-                        >
-                            点击此处使用系统相机
-                        </Button>
+                        {/* Only show fallback button if NOT worker */}
+                        {currentUser.role !== 'WORKER' && (
+                          <Button 
+                              variant="outline" 
+                              onClick={() => nativeInputRef.current?.click()}
+                              className="bg-white border-red-200 text-red-600"
+                          >
+                              点击此处使用系统相机
+                          </Button>
+                        )}
                     </div>
                 )}
               </div>
