@@ -146,7 +146,11 @@ const App: React.FC = () => {
     const { error } = await supabase.from('orders').insert(newOrders);
 
     if (error) {
-      alert(`导入失败: ${error.message}`);
+      // Offline/Error Fallback
+      console.warn("Supabase insert failed, falling back to local state:", error);
+      setOrders(prev => [...newOrders, ...prev]);
+      alert(`注意：云端同步失败（${error.message || '未知错误'}）。已切换至本地演示模式，仅在当前浏览器会话有效。`);
+      setStep('RESULTS');
     } else {
       alert(`成功导入 ${newOrders.length} 条订单！`);
       setStep('RESULTS');
@@ -166,9 +170,8 @@ const App: React.FC = () => {
 
     if (error) {
       console.error('Update failed:', error);
-      alert('同步到服务器失败，请检查网络。');
-      // Revert optimism if needed (complex, skipping for MVP)
-      fetchOrders(); 
+      // Suppress alert for better UX in demo mode
+      // alert('同步到服务器失败，请检查网络。');
     }
   };
 
@@ -226,14 +229,14 @@ const App: React.FC = () => {
         {loading && (
            <div className="fixed inset-0 bg-white/80 z-50 flex flex-col items-center justify-center backdrop-blur-sm">
              <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-500 border-t-transparent"></div>
-             <p className="mt-4 text-blue-600 font-medium">正在同步数据...</p>
+             <p className="mt-4 text-blue-600 font-medium">正在处理数据...</p>
            </div>
         )}
 
         {/* Connection Warning */}
         {!isOnline && !loading && (
            <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-center text-sm">
-             注意：无法连接到服务器。请检查网络或配置密钥。所做的更改可能无法保存。
+             注意：无法连接到服务器。系统将以离线模式运行，数据刷新后可能丢失。
            </div>
         )}
 
@@ -246,13 +249,14 @@ const App: React.FC = () => {
              <div className="text-center mb-8 max-w-lg">
                 <h2 className="text-3xl font-bold text-slate-900 mb-4">导入并派发订单</h2>
                 <p className="text-slate-600">
-                  上传 Excel 文件，订单将自动同步到所有员工的设备上。
+                  上传 Excel 文件，系统将自动识别并拆分：<br/>
+                  <b>任务名称、业务号、班组、姓名、串码</b>
                 </p>
              </div>
              <DropZone onFileLoaded={handleFileLoaded} />
              {orders.length > 0 && (
                <button onClick={() => setStep('RESULTS')} className="mt-8 text-blue-600 hover:underline">
-                 跳过上传，查看云端现有 {orders.length} 个订单 &rarr;
+                 跳过上传，查看现有 {orders.length} 个订单 &rarr;
                </button>
              )}
           </div>
