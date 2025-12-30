@@ -1,9 +1,8 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { Order, User, OrderStatus, ReturnReason } from '../types';
 import { Button } from './Button';
-import { Download, Search, RotateCcw, CheckCircle2, UserCircle, ArrowRightLeft, CheckSquare, Camera, Mic, X, Image as ImageIcon, Aperture, ScanLine, BrainCircuit, Filter, Settings, Globe, Server } from 'lucide-react';
+import { Download, Search, RotateCcw, CheckCircle2, UserCircle, ArrowRightLeft, CheckSquare, Camera, Mic, X, Image as ImageIcon, Aperture, ScanLine, BrainCircuit, Filter, Settings, Server, MapPin } from 'lucide-react';
 import ExcelJS from 'exceljs';
-import { GoogleGenAI } from "@google/genai";
 
 interface ResultsViewProps {
   orders: Order[];
@@ -77,6 +76,48 @@ const strictCompare = (target: string, candidate: string): { match: boolean; rea
   };
 };
 
+// --- COORDINATE TRANSFORM (WGS84 -> GCJ02) ---
+// Fixes GPS offset for Chinese Maps (Amap/Gaode)
+const wgs84ToGcj02 = (lat: number, lon: number): [number, number] => {
+  const PI = 3.1415926535897932384626;
+  const a = 6378245.0;
+  const ee = 0.00669342162296594323;
+
+  if (outOfChina(lat, lon)) return [lat, lon];
+
+  let dLat = transformLat(lon - 105.0, lat - 35.0);
+  let dLon = transformLon(lon - 105.0, lat - 35.0);
+  const radLat = lat / 180.0 * PI;
+  let magic = Math.sin(radLat);
+  magic = 1 - ee * magic * magic;
+  const sqrtMagic = Math.sqrt(magic);
+  dLat = (dLat * 180.0) / ((a * (1 - ee)) / (magic * sqrtMagic) * PI);
+  dLon = (dLon * 180.0) / (a / sqrtMagic * Math.cos(radLat) * PI);
+  return [lat + dLat, lon + dLon];
+};
+
+const transformLat = (x: number, y: number) => {
+  let ret = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * Math.sqrt(Math.abs(x));
+  ret += (20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0 / 3.0;
+  ret += (20.0 * Math.sin(y * Math.PI) + 40.0 * Math.sin(y / 3.0 * Math.PI)) * 2.0 / 3.0;
+  ret += (160.0 * Math.sin(y / 12.0 * Math.PI) + 320 * Math.sin(y * Math.PI / 30.0)) * 2.0 / 3.0;
+  return ret;
+};
+
+const transformLon = (x: number, y: number) => {
+  let ret = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * Math.sqrt(Math.abs(x));
+  ret += (20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0 / 3.0;
+  ret += (20.0 * Math.sin(x * Math.PI) + 40.0 * Math.sin(x / 3.0 * Math.PI)) * 2.0 / 3.0;
+  ret += (150.0 * Math.sin(x / 12.0 * Math.PI) + 300.0 * Math.sin(x / 30.0 * Math.PI)) * 2.0 / 3.0;
+  return ret;
+};
+
+const outOfChina = (lat: number, lon: number) => {
+  if (lon < 72.004 || lon > 137.8347) return true;
+  if (lat < 0.8293 || lat > 55.8271) return true;
+  return false;
+};
+
 // --- ALIBABA QWEN API HANDLER ---
 const callQwenVL = async (apiKey: string, base64Image: string, prompt: string) => {
   const response = await fetch("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", {
@@ -118,11 +159,10 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
 
   // Settings State
   const [showSettings, setShowSettings] = useState(false);
-  // Default to QWEN for China users
-  const [aiProvider, setAiProvider] = useState<'GEMINI' | 'QWEN'>(() => (localStorage.getItem('ai_provider') as 'GEMINI' | 'QWEN') || 'QWEN');
-  const [proxyUrl, setProxyUrl] = useState(() => localStorage.getItem('gemini_proxy_url') || '');
-  // Load Qwen Key from localStorage OR env
+  // Default to QWEN only
   const [qwenApiKey, setQwenApiKey] = useState(() => localStorage.getItem('qwen_api_key') || process.env.QWEN_KEY || '');
+  // Amap Key (Default provided by user)
+  const [amapKey, setAmapKey] = useState(() => localStorage.getItem('amap_api_key') || '0a0f148bea0fd959a629c2a6247c110e');
 
   // Transfer Modal State
   const [transferTarget, setTransferTarget] = useState<{orderId: string, currentName: string} | null>(null);
@@ -135,12 +175,13 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
   const [photoData, setPhotoData] = useState<string | null>(null); // Base64
   const [audioData, setAudioData] = useState<{name: string, data: string} | null>(null);
   
-  // Camera State
+  // Camera & Location State
   const [isCameraOpen, setIsCameraOpen] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const nativeInputRef = useRef<HTMLInputElement>(null); // Ref for native file input
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [locationText, setLocationText] = useState<string>('');
 
   // AI Verification State
   const [isVerifying, setIsVerifying] = useState(false);
@@ -183,17 +224,56 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
 
   // --- Settings Handler ---
   const handleSaveSettings = () => {
-    const url = proxyUrl.trim().replace(/\/$/, '');
-    localStorage.setItem('gemini_proxy_url', url);
-    localStorage.setItem('ai_provider', aiProvider);
     localStorage.setItem('qwen_api_key', qwenApiKey);
-    
-    setProxyUrl(url);
+    localStorage.setItem('amap_api_key', amapKey);
     setShowSettings(false);
-    alert('设置已保存。');
+    alert('系统配置已保存。');
   };
 
-  // --- AI Verification Logic ---
+  // --- Location Handler ---
+  const fetchLocation = () => {
+    if (!navigator.geolocation) {
+      setLocationText('不支持定位');
+      return;
+    }
+
+    setLocationText('正在获取地址...');
+
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const { latitude, longitude } = position.coords;
+        
+        // 1. Convert WGS84 (GPS) to GCJ02 (Amap/China)
+        const [gcjLat, gcjLon] = wgs84ToGcj02(latitude, longitude);
+
+        // 2. Call Amap API
+        if (amapKey) {
+            try {
+                const res = await fetch(`https://restapi.amap.com/v3/geocode/regeo?key=${amapKey}&location=${gcjLon},${gcjLat}&extensions=base`);
+                const data = await res.json();
+                if (data.status === '1' && data.regeocode && data.regeocode.formatted_address) {
+                    setLocationText(data.regeocode.formatted_address);
+                } else {
+                    setLocationText(`位置: ${latitude.toFixed(4)}, ${longitude.toFixed(4)}`);
+                }
+            } catch (error) {
+                console.error("Amap API Error:", error);
+                setLocationText(`位置: ${latitude.toFixed(4)}, ${longitude.toFixed(4)}`);
+            }
+        } else {
+             // Fallback if key missing (though we have default)
+             setLocationText(`位置: ${latitude.toFixed(4)}, ${longitude.toFixed(4)}`);
+        }
+      },
+      (error) => {
+        console.error("Geolocation error:", error);
+        setLocationText('无法获取定位');
+      },
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+    );
+  };
+
+  // --- AI Verification Logic (QWEN Only) ---
   const verifyImageWithAI = async () => {
     if (!photoData || !completionTarget) return;
 
@@ -201,6 +281,8 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
     setVerificationResult(null);
 
     try {
+      if (!qwenApiKey) throw new Error("未配置阿里云 API Key。请在设置中输入。");
+
       const promptText = `
         Task: Extract all alphanumeric strings found in this image.
         Instructions:
@@ -211,41 +293,9 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
         Output Format: {"candidates": ["string1", "string2"]}
       `;
 
-      let responseText = "{}";
-
-      // --- BRANCH 1: GOOGLE GEMINI ---
-      if (aiProvider === 'GEMINI') {
-        const apiKey = process.env.API_KEY;
-        if (!apiKey || apiKey.trim() === '') {
-           throw new Error("未配置 Google API Key。");
-        }
-        const clientConfig: any = { apiKey };
-        if (proxyUrl) {
-          clientConfig.baseUrl = proxyUrl;
-        }
-
-        const ai = new GoogleGenAI(clientConfig);
-        const base64Data = photoData.split(',')[1];
-
-        const response = await ai.models.generateContent({
-          model: 'gemini-3-flash-preview', 
-          contents: {
-            parts: [
-              { inlineData: { mimeType: 'image/jpeg', data: base64Data } },
-              { text: promptText }
-            ]
-          },
-          config: { temperature: 0.1 }
-        });
-        responseText = response.text || "{}";
-      } 
-      // --- BRANCH 2: ALIBABA QWEN ---
-      else if (aiProvider === 'QWEN') {
-        if (!qwenApiKey) throw new Error("未配置阿里云 API Key。请在设置中输入。");
-        responseText = await callQwenVL(qwenApiKey, photoData, promptText);
-      }
-
-      console.log(`[${aiProvider}] OCR Response:`, responseText);
+      // Call Qwen
+      const responseText = await callQwenVL(qwenApiKey, photoData, promptText);
+      console.log(`[QWEN] OCR Response:`, responseText);
 
       // Parse and Compare
       let candidates: string[] = [];
@@ -302,15 +352,9 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
       let detected = "系统错误";
 
       const isQuotaError = error.message.includes("429") || error.message.includes("quota");
-      const isNetworkError = error.message.includes("Failed to fetch") || error.message.includes("NetworkError");
-
       if (isQuotaError) {
         msg = "请求过于频繁(429)。";
         detected = "配额超限";
-      }
-      if (isNetworkError && aiProvider === 'GEMINI') {
-        msg = "无法连接 Google 服务。请在设置中切换为「阿里云 Qwen」或配置代理。";
-        detected = "网络错误";
       }
 
       setVerificationResult({
@@ -323,10 +367,13 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
     }
   };
 
-  // --- Camera Logic --- (Unchanged)
+  // --- Camera Logic ---
   const startCamera = async () => {
     setCameraError(null);
     setIsCameraOpen(true);
+    // Fetch location when camera starts
+    fetchLocation();
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
       if (videoRef.current) videoRef.current.srcObject = stream;
@@ -391,19 +438,48 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
   const addWatermarkToCanvas = (canvas: HTMLCanvasElement) => {
     const context = canvas.getContext('2d');
     if (!context) return;
+    
+    // Config
+    const fontSize = Math.max(24, Math.floor(canvas.width * 0.035));
+    const padding = fontSize * 0.5;
+    const lineHeight = fontSize * 1.3;
+    
+    // Content
     const now = new Date();
     const timeString = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
-    const fontSize = Math.max(24, Math.floor(canvas.width * 0.035));
+    const locationString = locationText || "位置获取中...";
+
     context.font = `bold ${fontSize}px monospace`;
     context.textBaseline = 'bottom';
-    const textMetrics = context.measureText(timeString);
-    const boxPadding = fontSize * 0.4;
-    const x = canvas.width - textMetrics.width - fontSize * 0.8;
-    const y = canvas.height - fontSize * 0.8;
-    context.fillStyle = 'rgba(0, 0, 0, 0.6)';
-    context.fillRect(x - boxPadding, y - fontSize + (fontSize * 0.15), textMetrics.width + (boxPadding * 2), fontSize * 1.2);
+    
+    // Measure Texts
+    const timeMetrics = context.measureText(timeString);
+    const locMetrics = context.measureText(locationString);
+    const maxWidth = Math.max(timeMetrics.width, locMetrics.width);
+    
+    // Positions (Bottom Right)
+    const x = canvas.width - maxWidth - (padding * 2);
+    const yBottom = canvas.height - padding;
+    // Box height covers 2 lines + padding
+    const boxHeight = (lineHeight * 2) + padding;
+    
+    // Draw Background Box
+    context.fillStyle = 'rgba(0, 0, 0, 0.5)';
+    context.fillRect(
+      x - padding, 
+      yBottom - boxHeight, 
+      maxWidth + (padding * 2), 
+      boxHeight + padding
+    );
+
+    // Draw Text (White)
     context.fillStyle = '#ffffff';
-    context.fillText(timeString, x, y + (fontSize * 0.1));
+    
+    // Draw Location (First line)
+    context.fillText(locationString, x, yBottom - lineHeight);
+    
+    // Draw Time (Second line)
+    context.fillText(timeString, x, yBottom);
   };
 
   const handleAudioImport = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -493,6 +569,11 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
     setPhotoData(order.completionPhoto || null);
     setVerificationResult(null); 
     setAudioData(null); 
+    
+    // Try to get location when opening modal for worker
+    if (currentUser.role === 'WORKER' && order.status === 'RECEIVED') {
+        fetchLocation();
+    }
   };
 
   const closeCompletionModal = () => {
@@ -503,6 +584,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
     setPhotoData(null);
     setAudioData(null);
     setVerificationResult(null);
+    setLocationText(''); 
   };
 
   const submitCompletion = () => {
@@ -574,58 +656,37 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
             </h3>
             
             <div className="space-y-5">
-              {/* Provider Selection */}
               <div>
-                <label className="block text-sm font-medium text-slate-800 mb-1">AI 服务商 (OCR 模型)</label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button 
-                    onClick={() => setAiProvider('GEMINI')}
-                    className={`p-3 rounded-lg border text-sm flex flex-col items-center gap-1 ${aiProvider === 'GEMINI' ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-200 hover:bg-slate-50'}`}
-                  >
-                    <Globe size={18} />
-                    Google Gemini
-                  </button>
-                  <button 
-                    onClick={() => setAiProvider('QWEN')}
-                    className={`p-3 rounded-lg border text-sm flex flex-col items-center gap-1 ${aiProvider === 'QWEN' ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-200 hover:bg-slate-50'}`}
-                  >
-                    <Server size={18} />
-                    阿里云 Qwen
-                  </button>
-                </div>
+                 <label className="block text-sm font-medium text-slate-800 flex items-center gap-2">
+                   <Server size={16} /> 阿里云 Qwen API Key
+                 </label>
+                 <p className="text-xs text-slate-500 mb-2 mt-1">
+                   用于 OCR 识别。
+                 </p>
+                 <input 
+                    type="password"
+                    className="w-full p-2 border border-slate-300 rounded-lg text-sm"
+                    value={qwenApiKey}
+                    onChange={e => setQwenApiKey(e.target.value)}
+                    placeholder="sk-..."
+                  />
               </div>
 
-              {/* Dynamic Config Fields */}
-              {aiProvider === 'GEMINI' ? (
-                <div>
-                   <label className="block text-sm font-medium text-slate-800">API 代理地址 (可选)</label>
-                   <p className="text-xs text-slate-500 mb-2">国内连接 Google 需配置代理。</p>
-                   <input 
-                      type="text"
-                      className="w-full p-2 border border-slate-300 rounded-lg text-sm"
-                      value={proxyUrl}
-                      onChange={e => setProxyUrl(e.target.value)}
-                      placeholder="https://..."
-                    />
-                </div>
-              ) : (
-                <div>
-                   <label className="block text-sm font-medium text-slate-800">阿里云 API Key <span className="text-red-500">*</span></label>
-                   <p className="text-xs text-slate-500 mb-2">
-                     推荐国内用户使用。
-                     <a href="https://bailian.console.aliyun.com/" target="_blank" rel="noreferrer" className="text-blue-600 underline ml-1">
-                       点击获取 Key (通义千问)
-                     </a>
-                   </p>
-                   <input 
-                      type="password"
-                      className="w-full p-2 border border-slate-300 rounded-lg text-sm"
-                      value={qwenApiKey}
-                      onChange={e => setQwenApiKey(e.target.value)}
-                      placeholder="sk-..."
-                    />
-                </div>
-              )}
+              <div>
+                 <label className="block text-sm font-medium text-slate-800 flex items-center gap-2">
+                   <MapPin size={16} /> 高德地图 API Key (Web服务)
+                 </label>
+                 <p className="text-xs text-slate-500 mb-2 mt-1">
+                   用于将 GPS 坐标转换为中文地址。
+                 </p>
+                 <input 
+                    type="text"
+                    className="w-full p-2 border border-slate-300 rounded-lg text-sm"
+                    value={amapKey}
+                    onChange={e => setAmapKey(e.target.value)}
+                    placeholder="请输入 Key..."
+                  />
+              </div>
             </div>
 
             <div className="flex gap-2 justify-end mt-6">
@@ -685,17 +746,24 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
 
               <div>
                 <div className="flex justify-between items-center mb-2">
-                  <label className="block text-sm font-semibold text-slate-700">3. 现场拍照 (带时间水印)</label>
+                  <label className="block text-sm font-semibold text-slate-700">3. 现场拍照 (时间+地点水印)</label>
                   {canEditCompletion && photoData && (
                     <button 
                       onClick={verifyImageWithAI}
                       disabled={isVerifying}
                       className="text-xs flex items-center gap-1 bg-indigo-50 text-indigo-700 px-2 py-1 rounded-full border border-indigo-200 hover:bg-indigo-100 transition-colors disabled:opacity-50"
                     >
-                      {isVerifying ? <span className="animate-pulse">AI 识别中...</span> : <><BrainCircuit size={14} /> 智能核对 ({aiProvider === 'QWEN' ? '通义' : 'Gemini'})</>}
+                      {isVerifying ? <span className="animate-pulse">AI 识别中...</span> : <><BrainCircuit size={14} /> 智能核对 (通义千问)</>}
                     </button>
                   )}
                 </div>
+
+                {canEditCompletion && (
+                  <div className="mb-3 flex items-center gap-2 text-xs text-slate-500 bg-slate-50 p-2 rounded border border-slate-200">
+                    <MapPin size={14} className={locationText && !locationText.includes('无法') ? "text-green-600" : "text-amber-500"} />
+                    <span>{locationText || "正在获取当前位置..."}</span>
+                  </div>
+                )}
                 
                 <input type="file" accept="image/*" capture="environment" className="hidden" ref={nativeInputRef} onChange={handleNativeCameraCapture} />
 
@@ -879,8 +947,8 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
                   <RotateCcw size={16} className="mr-2" /> 导入新数据
                 </Button>
              )}
-             {/* Settings Button (New) */}
-             <Button variant="secondary" onClick={() => setShowSettings(true)} className="px-3" title="系统设置/模型切换">
+             {/* Settings Button (Simple) */}
+             <Button variant="secondary" onClick={() => setShowSettings(true)} className="px-3" title="系统设置">
                <Settings size={18} />
              </Button>
 
