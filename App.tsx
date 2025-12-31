@@ -147,6 +147,22 @@ const App: React.FC = () => {
     const { error } = await supabase.from('orders').insert(newOrders);
 
     if (error) {
+      // Check for missing column error (Graceful degradation)
+      // "Could not find the 'deadline' column"
+      if (error.message && (error.message.includes('deadline') || error.message.includes('column'))) {
+         console.warn("Database missing column, retrying without deadline...");
+         // Retry without the problematic field
+         const safeOrders = newOrders.map(({ deadline, ...rest }) => rest);
+         const retry = await supabase.from('orders').insert(safeOrders);
+         
+         if (!retry.error) {
+            alert(`部分成功：订单已导入，但“截止时间”无法保存，因为云端数据库缺少 'deadline' 列。\n\n请在 Supabase SQL 编辑器中运行以下命令修复：\nALTER TABLE orders ADD COLUMN deadline TIMESTAMPTZ;`);
+            setStep('RESULTS');
+            setLoading(false);
+            return;
+         }
+      }
+
       // Offline/Error Fallback
       console.warn("Supabase insert failed, falling back to local state:", error);
       setOrders(prev => [...newOrders, ...prev]);
@@ -171,8 +187,15 @@ const App: React.FC = () => {
 
     if (error) {
       console.error('Update failed:', JSON.stringify(error, null, 2));
-      // Suppress alert for better UX in demo mode
-      // alert('同步到服务器失败，请检查网络。');
+      
+      // Handle missing column specific error on update
+      if (error.message && (error.message.includes('deadline') || error.message.includes('column'))) {
+         alert("同步警告：数据库缺少 'deadline' 列，截止时间修改仅在本地生效。\n请管理员运行 SQL: ALTER TABLE orders ADD COLUMN deadline TIMESTAMPTZ;");
+         return;
+      }
+
+      // Suppress alert for better UX in demo mode if it's just a network blip, 
+      // but log it.
     }
   };
 
