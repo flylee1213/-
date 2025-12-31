@@ -1,17 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { ColumnMapping, FIELD_LABELS } from '../types';
 import { Button } from './Button';
-import { ArrowRight, FileSpreadsheet, RotateCcw } from 'lucide-react';
+import { ArrowRight, FileSpreadsheet, RotateCcw, Clock } from 'lucide-react';
 
 interface MappingWizardProps {
   headers: string[];
   previewData: any[][];
-  onConfirm: (mapping: ColumnMapping) => void;
+  onConfirm: (mapping: ColumnMapping, deadline?: string) => void;
   onCancel: () => void;
 }
 
 export const MappingWizard: React.FC<MappingWizardProps> = ({ headers, previewData, onConfirm, onCancel }) => {
   const [mapping, setMapping] = useState<Partial<ColumnMapping>>({});
+  const [deadline, setDeadline] = useState<string>('');
   
   // Auto-detection logic
   useEffect(() => {
@@ -77,10 +78,28 @@ export const MappingWizard: React.FC<MappingWizardProps> = ({ headers, previewDa
               </select>
             </div>
           ))}
+
+          {/* Deadline Setting */}
+          <div className="bg-amber-50 p-4 rounded-lg border border-amber-100">
+             <label className="block text-sm font-semibold text-amber-900 mb-2 flex items-center gap-2">
+               <Clock size={16} /> 任务截止时间 (可选)
+             </label>
+             <input
+               type="datetime-local"
+               className="w-full p-2.5 bg-white border border-amber-200 rounded-md text-sm focus:ring-2 focus:ring-amber-500 outline-none"
+               value={deadline}
+               onChange={(e) => setDeadline(e.target.value)}
+             />
+             <p className="text-xs text-amber-700 mt-2 leading-relaxed">
+               若设置此项，超过该时间后：<br/>
+               1. 执行人员将<strong>无法看到</strong>该批次订单。<br/>
+               2. 执行人员将<strong>无法提交或修改</strong>该批次订单。
+             </p>
+          </div>
           
           <div className="pt-4">
              <Button 
-                onClick={() => isComplete && onConfirm(mapping as ColumnMapping)}
+                onClick={() => isComplete && onConfirm(mapping as ColumnMapping, deadline ? new Date(deadline).toISOString() : undefined)}
                 disabled={!isComplete}
                 className="w-full justify-center py-3 text-base"
              >

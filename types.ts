@@ -15,6 +15,9 @@ export interface Order {
   completedAt?: string;
   history: string[]; // Audit log
   
+  // Deadline control
+  deadline?: string | null; // ISO string
+
   // Completion details
   returnReason?: ReturnReason;
   completionRemark?: string;

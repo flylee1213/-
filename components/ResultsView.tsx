@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { Order, User, OrderStatus, ReturnReason } from '../types';
 import { Button } from './Button';
-import { Download, Search, RotateCcw, CheckCircle2, UserCircle, ArrowRightLeft, CheckSquare, Camera, Mic, X, Image as ImageIcon, Aperture, ScanLine, BrainCircuit, Filter, Settings, Server, MapPin } from 'lucide-react';
+import { Download, Search, RotateCcw, CheckCircle2, UserCircle, ArrowRightLeft, CheckSquare, Camera, Mic, X, Image as ImageIcon, Aperture, ScanLine, BrainCircuit, Filter, Settings, Server, MapPin, Clock, Edit2, CalendarClock } from 'lucide-react';
 import ExcelJS from 'exceljs';
 
 interface ResultsViewProps {
@@ -168,6 +168,10 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
   const [transferTarget, setTransferTarget] = useState<{orderId: string, currentName: string} | null>(null);
   const [newOwnerName, setNewOwnerName] = useState('');
 
+  // Deadline Edit Modal State
+  const [deadlineEditTarget, setDeadlineEditTarget] = useState<{ id: string, oldDeadline: string } | null>(null);
+  const [newDeadlineDate, setNewDeadlineDate] = useState('');
+
   // Completion Modal State
   const [completionTarget, setCompletionTarget] = useState<Order | null>(null);
   const [returnReason, setReturnReason] = useState<ReturnReason | ''>('');
@@ -199,9 +203,20 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
 
   const filteredOrders = useMemo(() => {
     const lowerTerm = searchTerm.toLowerCase().trim();
+    // const now = new Date(); // No longer needed for hiding orders
+    
     let visibleOrders = orders;
+    
+    // WORKER FILTERING LOGIC
     if (currentUser.role === 'WORKER') {
-      visibleOrders = orders.filter(o => o.userName === currentUser.name);
+      visibleOrders = orders.filter(o => {
+          // 1. Must be assigned to current user
+          const isOwner = o.userName === currentUser.name;
+          if (!isOwner) return false;
+          
+          // 2. Deadline check REMOVED. Workers can see expired orders, just can't edit them.
+          return true;
+      });
     }
 
     const results = visibleOrders.filter(order => {
@@ -535,6 +550,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
         { header: '姓名', key: 'userName', width: 15 },
         { header: '串码', key: 'serialCode', width: 25 },
         { header: '状态', key: 'status', width: 10 },
+        { header: '截止时间', key: 'deadline', width: 20 },
         { header: '回单现象', key: 'returnReason', width: 20 },
         { header: '回单备注', key: 'completionRemark', width: 30 },
         { header: '现场照片', key: 'photo', width: 40 },
@@ -549,6 +565,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
           userName: order.userName,
           serialCode: order.serialCode,
           status: getStatusLabel(order.status),
+          deadline: order.deadline ? new Date(order.deadline).toLocaleString() : '',
           returnReason: order.returnReason || '',
           completionRemark: order.completionRemark || '',
           photo: '',
@@ -558,7 +575,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
         const row = sheet.addRow(rowData);
         if (order.completionPhoto) {
           const imageId = workbook.addImage({ base64: order.completionPhoto, extension: 'jpeg' });
-          sheet.addImage(imageId, { tl: { col: 8, row: row.number - 1 }, br: { col: 9, row: row.number } } as any);
+          sheet.addImage(imageId, { tl: { col: 9, row: row.number - 1 }, br: { col: 10, row: row.number } } as any);
           row.height = 150; 
         } else {
           row.height = 25;
@@ -584,6 +601,11 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
   };
 
   const handleReceive = (order: Order) => {
+    // Safety check for deadline
+    if (order.deadline && new Date() > new Date(order.deadline)) {
+        alert("该订单已过截止时间，无法操作。");
+        return;
+    }
     const currentHistory = Array.isArray(order.history) ? order.history : [];
     onUpdateOrder(order.id, {
       status: 'RECEIVED',
@@ -601,7 +623,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
     setAudioData(null); 
     
     // Try to get location when opening modal for worker
-    if (currentUser.role === 'WORKER' && order.status === 'RECEIVED') {
+    if (currentUser.role === 'WORKER' && (order.status === 'RECEIVED' || order.status === 'COMPLETED')) {
         fetchLocation();
     }
   };
@@ -619,10 +641,27 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
 
   const submitCompletion = () => {
     if (!completionTarget) return;
-    if (currentUser.role === 'ADMIN' || completionTarget.status === 'COMPLETED') { closeCompletionModal(); return; }
+    
+    // Safety Check: Deadline
+    if (currentUser.role === 'WORKER' && completionTarget.deadline && new Date() > new Date(completionTarget.deadline)) {
+        alert("该订单已过截止时间，无法提交或修改。");
+        closeCompletionModal();
+        return;
+    }
+
+    // 允许 WORKER 角色修改 COMPLETED 状态的订单
+    if (currentUser.role === 'ADMIN') { closeCompletionModal(); return; }
+    
     if (!returnReason) { alert('请选择回单现象'); return; }
+    if (!photoData) { alert('请拍摄现场照片'); return; }
+
     const currentHistory = Array.isArray(completionTarget.history) ? completionTarget.history : [];
     const verificationNote = verificationResult ? `(AI核对: ${verificationResult.match ? '通过' : '失败'} - 识别为 ${verificationResult.detected})` : '';
+    
+    // 判断是首次完成还是修改
+    const isUpdate = completionTarget.status === 'COMPLETED';
+    const actionDesc = isUpdate ? '修改了回单' : '完成回单';
+
     onUpdateOrder(completionTarget.id, {
       status: 'COMPLETED',
       completedAt: new Date().toISOString(),
@@ -630,7 +669,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
       completionRemark: remark + (remark && verificationNote ? ' ' : '') + verificationNote,
       completionPhoto: photoData || undefined,
       completionAudio: audioData?.data || undefined,
-      history: [...currentHistory, `${currentUser.name} 于 ${new Date().toLocaleString()} 完成回单 ${verificationNote}`]
+      history: [...currentHistory, `${currentUser.name} 于 ${new Date().toLocaleString()} ${actionDesc} ${verificationNote}`]
     });
     closeCompletionModal();
   };
@@ -649,6 +688,38 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
       history: [...currentHistory, `${currentUser.name} 转派给 ${newOwnerName} 于 ${new Date().toLocaleString()}`]
     });
     setTransferTarget(null);
+  };
+
+  // --- Deadline Edit Logic ---
+  const openDeadlineModal = (order: Order) => {
+    setDeadlineEditTarget({ id: order.id, oldDeadline: order.deadline || '' });
+    if (order.deadline) {
+        // Adjust for datetime-local input (requires local ISO string)
+        const d = new Date(order.deadline);
+        // Simply using slice(0,16) on ISO string gives UTC. 
+        // We need local time.
+        const pad = (n: number) => n < 10 ? '0' + n : n;
+        const localIso = d.getFullYear() +
+            '-' + pad(d.getMonth() + 1) +
+            '-' + pad(d.getDate()) +
+            'T' + pad(d.getHours()) +
+            ':' + pad(d.getMinutes());
+        setNewDeadlineDate(localIso);
+    } else {
+        setNewDeadlineDate('');
+    }
+  };
+
+  const handleSaveDeadline = () => {
+    if (!deadlineEditTarget) return;
+    const currentHistory = orders.find(o => o.id === deadlineEditTarget.id)?.history || [];
+    const newHistoryEntry = `${currentUser.name} 于 ${new Date().toLocaleString()} 修改截止时间`;
+    
+    onUpdateOrder(deadlineEditTarget.id, {
+        deadline: newDeadlineDate ? new Date(newDeadlineDate).toISOString() : null,
+        history: [...currentHistory, newHistoryEntry]
+    });
+    setDeadlineEditTarget(null);
   };
 
   const getStatusLabel = (status: OrderStatus) => {
@@ -671,7 +742,11 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
     }
   };
   
-  const canEditCompletion = completionTarget?.status === 'RECEIVED' && currentUser.role === 'WORKER';
+  // 截止判断
+  const isTargetExpired = completionTarget?.deadline && new Date() > new Date(completionTarget.deadline);
+
+  // 允许 WORKER 在 COMPLETED 状态下编辑 (前提：未过期)
+  const canEditCompletion = (completionTarget?.status === 'RECEIVED' || completionTarget?.status === 'COMPLETED') && currentUser.role === 'WORKER' && !isTargetExpired;
 
   return (
     <div className="w-full max-w-6xl mx-auto space-y-6 relative">
@@ -734,9 +809,15 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
             <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50 rounded-t-xl">
                <div>
                  <h3 className="text-lg font-bold text-slate-800">
-                    {canEditCompletion ? '填写回单' : '回单详情'}
+                    {canEditCompletion ? '填写/修改回单' : '回单详情'}
                  </h3>
                  <p className="text-xs text-slate-500">业务号: {completionTarget.businessNo}</p>
+                 {completionTarget.deadline && (
+                    <p className={`text-xs mt-1 ${isTargetExpired ? 'text-red-500 font-bold' : 'text-amber-600'}`}>
+                        截止时间: {new Date(completionTarget.deadline).toLocaleString()}
+                        {isTargetExpired && ' (已截止 - 无法修改)'}
+                    </p>
+                 )}
                </div>
                <button onClick={closeCompletionModal} className="text-slate-400 hover:text-slate-600">
                  <X size={24} />
@@ -746,7 +827,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
             <div className="p-6 overflow-y-auto space-y-6 flex-1">
               <div>
                 <label className="block text-sm font-semibold text-slate-700 mb-2">
-                  1. 回单现象 <span className="text-red-500">*</span>
+                  1. 回单现象 {canEditCompletion && <span className="text-red-500">*</span>}
                 </label>
                 <select 
                   className="w-full p-3 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100 disabled:text-slate-500"
@@ -776,7 +857,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
 
               <div>
                 <div className="flex justify-between items-center mb-2">
-                  <label className="block text-sm font-semibold text-slate-700">3. 现场拍照 (时间+地点水印)</label>
+                  <label className="block text-sm font-semibold text-slate-700">3. 现场拍照 (时间+地点水印) {canEditCompletion && <span className="text-red-500">*</span>}</label>
                   {canEditCompletion && photoData && (
                     <button 
                       onClick={verifyImageWithAI}
@@ -885,7 +966,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
 
             <div className="p-5 border-t border-slate-100 flex gap-3 justify-end bg-slate-50 rounded-b-xl">
               <Button variant="outline" onClick={closeCompletionModal}>{canEditCompletion ? '取消' : '关闭'}</Button>
-              {canEditCompletion && <Button onClick={submitCompletion} disabled={!returnReason}>提交回单</Button>}
+              {canEditCompletion && <Button onClick={submitCompletion} disabled={!returnReason || !photoData}>提交回单</Button>}
             </div>
           </div>
         </div>
@@ -904,6 +985,35 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
             <div className="flex gap-2 justify-end">
               <Button variant="outline" onClick={() => setTransferTarget(null)}>取消</Button>
               <Button onClick={confirmTransfer} disabled={!newOwnerName.trim()}>确认转派</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- Deadline Edit Modal --- */}
+      {deadlineEditTarget && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-sm">
+            <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                <CalendarClock size={20} className="text-blue-600" />
+                修改截止时间
+            </h3>
+            <p className="text-sm text-slate-500 mb-4">
+                请设置新的任务截止时间。
+            </p>
+            <div className="mb-4">
+              <label className="block text-sm font-medium mb-1 text-slate-700">截止时间</label>
+              <input 
+                type="datetime-local" 
+                className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                value={newDeadlineDate} 
+                onChange={e => setNewDeadlineDate(e.target.value)} 
+              />
+            </div>
+            <div className="flex gap-2 justify-end pt-2">
+              <Button variant="outline" onClick={() => setDeadlineEditTarget(null)}>取消</Button>
+              <Button variant="secondary" onClick={() => { setNewDeadlineDate(''); handleSaveDeadline(); }} className="bg-red-50 text-red-600 hover:bg-red-100">清除限制</Button>
+              <Button onClick={handleSaveDeadline}>保存修改</Button>
             </div>
           </div>
         </div>
@@ -992,92 +1102,125 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
         <div className="flex-1 overflow-auto bg-slate-50 p-4">
           {filteredOrders.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filteredOrders.map((order) => (
-                <div 
-                  key={order.id} 
-                  className={`bg-white rounded-lg border shadow-sm hover:shadow-md transition-all p-5 flex flex-col space-y-3 relative group 
-                    ${order.status === 'RECEIVED' ? 'border-blue-300 ring-1 ring-blue-100' : 'border-slate-200'}
-                  `}
-                >
-                  <div className="flex justify-between items-start border-b border-slate-100 pb-2">
-                    <span className="bg-slate-800 text-white text-xs font-semibold px-2.5 py-0.5 rounded">
-                      {order.taskName}
-                    </span>
-                    <span className={`text-xs font-semibold px-2 py-0.5 rounded ${getStatusColor(order.status)}`}>
-                      {getStatusLabel(order.status)}
-                    </span>
+              {filteredOrders.map((order) => {
+                const isExpired = order.deadline ? new Date() > new Date(order.deadline) : false;
+                
+                return (
+                  <div 
+                    key={order.id} 
+                    className={`bg-white rounded-lg border shadow-sm hover:shadow-md transition-all p-5 flex flex-col space-y-3 relative group 
+                      ${order.status === 'RECEIVED' ? 'border-blue-300 ring-1 ring-blue-100' : 'border-slate-200'}
+                      ${isExpired ? 'opacity-80 bg-slate-50' : ''}
+                    `}
+                  >
+                    <div className="flex justify-between items-start border-b border-slate-100 pb-2">
+                      <span className="bg-slate-800 text-white text-xs font-semibold px-2.5 py-0.5 rounded">
+                        {order.taskName}
+                      </span>
+                      <span className={`text-xs font-semibold px-2 py-0.5 rounded ${getStatusColor(order.status)}`}>
+                        {getStatusLabel(order.status)}
+                      </span>
+                    </div>
+                    
+                    <div className="space-y-1">
+                      <div className="flex justify-between">
+                         <span className="text-xs text-slate-500">业务号</span>
+                         <span className="text-sm font-medium text-slate-800">{order.businessNo}</span>
+                      </div>
+                      <div className="flex justify-between">
+                         <span className="text-xs text-slate-500">班组</span>
+                         <span className="text-sm font-medium text-slate-800">{order.team}</span>
+                      </div>
+                      <div className="flex justify-between">
+                         <span className="text-xs text-slate-500">处理人</span>
+                         <span className="text-sm font-medium text-blue-600">{order.userName}</span>
+                      </div>
+                      
+                      {/* Deadline Display */}
+                      <div className="flex justify-between items-center text-xs mt-1 pt-1 border-t border-slate-50 min-h-[24px]">
+                        <span className="text-slate-500">截止</span>
+                        <div className="flex items-center gap-1">
+                            {order.deadline ? (
+                                <span className={`font-medium ${isExpired ? 'text-red-600' : 'text-amber-600'}`}>
+                                    {new Date(order.deadline).toLocaleString()}
+                                </span>
+                            ) : (
+                                <span className="text-slate-400 italic">无限制</span>
+                            )}
+                            {currentUser.role === 'ADMIN' && (
+                                <button 
+                                    onClick={(e) => { e.stopPropagation(); openDeadlineModal(order); }}
+                                    className="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                                    title="修改截止时间"
+                                >
+                                    <Edit2 size={12} />
+                                </button>
+                            )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="pt-2">
+                      <div className="bg-slate-50 p-2 rounded text-center border border-slate-100 mb-3">
+                        <span className="text-xs text-slate-500 block uppercase tracking-wider mb-1">串码</span>
+                        <span className="font-mono text-sm font-bold text-slate-700 break-all">{order.serialCode}</span>
+                      </div>
+
+                      {order.status === 'COMPLETED' && (
+                         <div className="flex gap-2 mb-3 text-xs text-slate-500">
+                            {order.completionPhoto && <span className="flex items-center"><ImageIcon size={12} className="mr-1"/>有照片</span>}
+                            {order.completionAudio && <span className="flex items-center"><Mic size={12} className="mr-1"/>有录音</span>}
+                         </div>
+                      )}
+
+                      <div className="flex gap-2">
+                        {currentUser.role === 'WORKER' && (order.status === 'DISPATCHED' || order.status === 'PENDING') && (
+                          <Button 
+                            onClick={() => handleReceive(order)}
+                            disabled={isExpired}
+                            className="w-full text-xs py-1"
+                            title={isExpired ? "已过截止时间，无法接收" : ""}
+                          >
+                            <CheckCircle2 size={14} className="mr-1" /> {isExpired ? '已截止' : '接收'}
+                          </Button>
+                        )}
+
+                        {currentUser.role === 'WORKER' && order.status === 'RECEIVED' && (
+                          <Button 
+                            onClick={() => openCompletionModal(order)}
+                            // 如果过期，进入查看模式（openCompletionModal内部逻辑会通过canEditCompletion禁止编辑）
+                            className={`w-full text-xs py-1 ${isExpired ? '' : 'bg-green-600 hover:bg-green-700'}`}
+                            variant={isExpired ? 'outline' : 'primary'}
+                          >
+                            <CheckSquare size={14} className="mr-1" /> 
+                            {isExpired ? '查看详情 (已截止)' : '回单'}
+                          </Button>
+                        )}
+
+                        {(currentUser.role === 'WORKER' || currentUser.role === 'ADMIN') && order.status === 'COMPLETED' && (
+                          <Button 
+                            variant="outline"
+                            onClick={() => openCompletionModal(order)}
+                            className="w-full text-xs py-1"
+                          >
+                            {currentUser.role === 'WORKER' ? (isExpired ? '查看详情 (已截止)' : '查看/修改') : '查看回单'}
+                          </Button>
+                        )}
+
+                        {currentUser.role === 'ADMIN' && (
+                          <Button 
+                            variant="secondary"
+                            onClick={() => openTransferModal(order)}
+                            className="w-full text-xs py-1"
+                          >
+                            <ArrowRightLeft size={14} className="mr-1" /> 转派
+                          </Button>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                  
-                  <div className="space-y-1">
-                    <div className="flex justify-between">
-                       <span className="text-xs text-slate-500">业务号</span>
-                       <span className="text-sm font-medium text-slate-800">{order.businessNo}</span>
-                    </div>
-                    <div className="flex justify-between">
-                       <span className="text-xs text-slate-500">班组</span>
-                       <span className="text-sm font-medium text-slate-800">{order.team}</span>
-                    </div>
-                    <div className="flex justify-between">
-                       <span className="text-xs text-slate-500">处理人</span>
-                       <span className="text-sm font-medium text-blue-600">{order.userName}</span>
-                    </div>
-                  </div>
-
-                  <div className="pt-2">
-                    <div className="bg-slate-50 p-2 rounded text-center border border-slate-100 mb-3">
-                      <span className="text-xs text-slate-500 block uppercase tracking-wider mb-1">串码</span>
-                      <span className="font-mono text-sm font-bold text-slate-700 break-all">{order.serialCode}</span>
-                    </div>
-
-                    {order.status === 'COMPLETED' && (
-                       <div className="flex gap-2 mb-3 text-xs text-slate-500">
-                          {order.completionPhoto && <span className="flex items-center"><ImageIcon size={12} className="mr-1"/>有照片</span>}
-                          {order.completionAudio && <span className="flex items-center"><Mic size={12} className="mr-1"/>有录音</span>}
-                       </div>
-                    )}
-
-                    <div className="flex gap-2">
-                      {currentUser.role === 'WORKER' && (order.status === 'DISPATCHED' || order.status === 'PENDING') && (
-                        <Button 
-                          onClick={() => handleReceive(order)}
-                          className="w-full text-xs py-1"
-                        >
-                          <CheckCircle2 size={14} className="mr-1" /> 接收
-                        </Button>
-                      )}
-
-                      {currentUser.role === 'WORKER' && order.status === 'RECEIVED' && (
-                        <Button 
-                          onClick={() => openCompletionModal(order)}
-                          className="w-full text-xs py-1 bg-green-600 hover:bg-green-700"
-                        >
-                          <CheckSquare size={14} className="mr-1" /> 回单
-                        </Button>
-                      )}
-
-                      {(currentUser.role === 'WORKER' || currentUser.role === 'ADMIN') && order.status === 'COMPLETED' && (
-                        <Button 
-                          variant="outline"
-                          onClick={() => openCompletionModal(order)}
-                          className="w-full text-xs py-1"
-                        >
-                          查看回单
-                        </Button>
-                      )}
-
-                      {currentUser.role === 'ADMIN' && (
-                        <Button 
-                          variant="secondary"
-                          onClick={() => openTransferModal(order)}
-                          className="w-full text-xs py-1"
-                        >
-                          <ArrowRightLeft size={14} className="mr-1" /> 转派
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           ) : (
              <div className="flex flex-col items-center justify-center h-full text-slate-400">

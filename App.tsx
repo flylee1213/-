@@ -114,7 +114,7 @@ const App: React.FC = () => {
     }
   };
 
-  const handleMappingConfirm = async (mapping: ColumnMapping) => {
+  const handleMappingConfirm = async (mapping: ColumnMapping, deadline?: string) => {
     setLoading(true);
     const dataRows = rawData.slice(1);
     
@@ -138,6 +138,7 @@ const App: React.FC = () => {
         serialCode: getValue(mapping.serialCode),
         status: 'DISPATCHED',
         history: [`管理员导入于 ${new Date().toLocaleString()}`],
+        deadline: deadline, // Add deadline to order
         // DB columns match JSON keys exactly due to our quote strategy in SQL
       } as Order;
     }).filter((o): o is Order => o !== null);
@@ -152,7 +153,7 @@ const App: React.FC = () => {
       alert(`注意：云端同步失败（${error.message || '未知错误'}）。已切换至本地演示模式，仅在当前浏览器会话有效。`);
       setStep('RESULTS');
     } else {
-      alert(`成功导入 ${newOrders.length} 条订单！`);
+      alert(`成功导入 ${newOrders.length} 条订单！` + (deadline ? ` 截止时间: ${new Date(deadline).toLocaleString()}` : ''));
       setStep('RESULTS');
     }
     setLoading(false);
@@ -169,7 +170,7 @@ const App: React.FC = () => {
       .eq('id', orderId);
 
     if (error) {
-      console.error('Update failed:', error);
+      console.error('Update failed:', JSON.stringify(error, null, 2));
       // Suppress alert for better UX in demo mode
       // alert('同步到服务器失败，请检查网络。');
     }
