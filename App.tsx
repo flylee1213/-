@@ -231,7 +231,7 @@ const App: React.FC = () => {
             {user && (
               <div className="text-sm text-slate-600 hidden sm:flex items-center gap-2 bg-slate-100 px-3 py-1 rounded-full">
                 <div className={`w-2 h-2 rounded-full ${user.role === 'ADMIN' ? 'bg-purple-500' : 'bg-green-500'}`}></div>
-                <span className="font-semibold">{user.name}</span>
+                <span className="font-semibold">{user.name}{user.team ? ` (${user.team})` : ''}</span>
               </div>
             )}
             

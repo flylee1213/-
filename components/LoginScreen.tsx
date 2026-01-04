@@ -1,24 +1,52 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Button } from './Button';
 import { User, UserRole } from '../types';
-import { Shield, User as UserIcon, LogIn } from 'lucide-react';
+import { Shield, User as UserIcon, LogIn, Users, Map } from 'lucide-react';
+import { TEAM_DATA, DISTRICTS } from '../data/teamData';
 
 interface LoginScreenProps {
   onLogin: (user: User) => void;
+  availableTeams?: string[]; // Legacy prop, can be ignored now or used for fallback
 }
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
   const [role, setRole] = useState<UserRole>('ADMIN');
   const [name, setName] = useState('');
+  
+  // Two-step selection state
+  const [district, setDistrict] = useState('');
+  const [team, setTeam] = useState('');
+
+  // Get teams based on selected district
+  const currentTeams = useMemo(() => {
+    if (!district) return [];
+    return TEAM_DATA[district] || [];
+  }, [district]);
+
+  const handleDistrictChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    setDistrict(e.target.value);
+    setTeam(''); // Reset team when district changes
+  };
 
   const handleLogin = () => {
-    if (role === 'WORKER' && !name.trim()) {
-      alert('请输入您的姓名以匹配订单');
-      return;
+    if (role === 'WORKER') {
+        if (!district) {
+            alert('请先选择所属区域');
+            return;
+        }
+        if (!team) {
+            alert('请选择您的班组');
+            return;
+        }
+        if (!name.trim()) {
+            alert('请输入您的姓名');
+            return;
+        }
     }
     onLogin({
       role,
-      name: role === 'ADMIN' ? '管理员' : name.trim()
+      name: role === 'ADMIN' ? '管理员' : name.trim(),
+      team: role === 'WORKER' ? team : undefined // Pass the specific team
     });
   };
 
@@ -57,16 +85,57 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
           </div>
 
           {role === 'WORKER' && (
-            <div className="space-y-2 animate-in slide-in-from-top-2">
-              <label className="block text-sm font-medium text-slate-700">您的姓名</label>
-              <input
-                type="text"
-                placeholder="请输入姓名 (需与Excel中一致)"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              />
-              <p className="text-xs text-slate-400">系统将根据姓名自动筛选您的订单</p>
+            <div className="space-y-4 animate-in slide-in-from-top-2">
+              
+              {/* 1. District Selection */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
+                    <Map size={16} /> 所属区域
+                </label>
+                <select 
+                    value={district} 
+                    onChange={handleDistrictChange}
+                    className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                >
+                    <option value="" disabled>-- 请选择区域 --</option>
+                    {DISTRICTS.map(d => (
+                        <option key={d} value={d}>{d}</option>
+                    ))}
+                </select>
+              </div>
+
+              {/* 2. Team Selection (Dependent) */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
+                    <Users size={16} /> 选择班组
+                </label>
+                <select 
+                    value={team} 
+                    onChange={e => setTeam(e.target.value)}
+                    disabled={!district}
+                    className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white disabled:bg-slate-100 disabled:text-slate-400"
+                >
+                    <option value="" disabled>
+                        {district ? "-- 请选择班组 --" : "-- 请先选择区域 --"}
+                    </option>
+                    {currentTeams.map(t => (
+                        <option key={t} value={t}>{t}</option>
+                    ))}
+                </select>
+              </div>
+
+              {/* 3. Name Input */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">您的姓名</label>
+                <input
+                    type="text"
+                    placeholder="请输入姓名"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+                <p className="text-xs text-slate-400 mt-1">系统将匹配 “班组 + 姓名”</p>
+              </div>
             </div>
           )}
 

@@ -52,4 +52,5 @@ export type UserRole = 'ADMIN' | 'WORKER';
 export interface User {
   name: string;
   role: UserRole;
+  team?: string; // Added optional team field to distinguish workers with same name
 }

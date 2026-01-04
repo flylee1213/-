@@ -1,8 +1,9 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { Order, User, OrderStatus, ReturnReason } from '../types';
 import { Button } from './Button';
-import { Download, Search, RotateCcw, CheckCircle2, UserCircle, ArrowRightLeft, CheckSquare, Camera, Mic, X, Image as ImageIcon, Aperture, ScanLine, BrainCircuit, Filter, Settings, Server, MapPin, Clock, Edit2, CalendarClock } from 'lucide-react';
+import { Download, Search, RotateCcw, CheckCircle2, UserCircle, ArrowRightLeft, CheckSquare, Camera, Mic, X, Image as ImageIcon, Aperture, ScanLine, BrainCircuit, Filter, Settings, Server, MapPin, Clock, Edit2, CalendarClock, Map, Users } from 'lucide-react';
 import ExcelJS from 'exceljs';
+import { TEAM_DATA, DISTRICTS } from '../data/teamData';
 
 interface ResultsViewProps {
   orders: Order[];
@@ -154,6 +155,7 @@ const callQwenVL = async (apiKey: string, base64Image: string, prompt: string) =
 export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, onReset, onUpdateOrder }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<OrderStatus | 'ALL'>('ALL');
+  const [districtFilter, setDistrictFilter] = useState<string>('ALL');
   const [teamFilter, setTeamFilter] = useState<string>('ALL');
   const [isExporting, setIsExporting] = useState(false);
 
@@ -195,26 +197,46 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
     message: string;
   } | null>(null);
 
-  // Extract unique teams for dropdown
+  // Helper: Check if a team belongs to a district
+  const isTeamInDistrict = (teamName: string, district: string) => {
+    return TEAM_DATA[district]?.includes(teamName);
+  };
+
+  // Extract unique teams for dropdown (Fallback for ALL districts)
   const uniqueTeams = useMemo(() => {
     const teams = new Set(orders.map(o => o.team).filter(Boolean));
     return Array.from(teams).sort();
   }, [orders]);
 
+  // Available Teams based on District selection
+  const availableTeamsForFilter = useMemo(() => {
+    if (districtFilter === 'ALL') {
+      return uniqueTeams;
+    }
+    return TEAM_DATA[districtFilter] || [];
+  }, [districtFilter, uniqueTeams]);
+
+  // Handle District Change
+  const handleDistrictChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    setDistrictFilter(e.target.value);
+    setTeamFilter('ALL'); // Reset team filter when district changes
+  };
+
   const filteredOrders = useMemo(() => {
     const lowerTerm = searchTerm.toLowerCase().trim();
-    // const now = new Date(); // No longer needed for hiding orders
     
     let visibleOrders = orders;
     
     // WORKER FILTERING LOGIC
     if (currentUser.role === 'WORKER') {
       visibleOrders = orders.filter(o => {
-          // 1. Must be assigned to current user
-          const isOwner = o.userName === currentUser.name;
-          if (!isOwner) return false;
+          // 1. Must be assigned to current user's NAME
+          const isNameMatch = o.userName === currentUser.name;
+          // 2. Must be assigned to current user's TEAM (if team is set)
+          const isTeamMatch = currentUser.team ? o.team === currentUser.team : true;
+
+          if (!isNameMatch || !isTeamMatch) return false;
           
-          // 2. Deadline check REMOVED. Workers can see expired orders, just can't edit them.
           return true;
       });
     }
@@ -224,8 +246,10 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
         String(val).toLowerCase().includes(lowerTerm)
       );
       const matchesStatus = statusFilter === 'ALL' || order.status === statusFilter;
+      const matchesDistrict = districtFilter === 'ALL' || (order.team && isTeamInDistrict(order.team, districtFilter));
       const matchesTeam = teamFilter === 'ALL' || order.team === teamFilter;
-      return matchesSearch && matchesStatus && matchesTeam;
+      
+      return matchesSearch && matchesStatus && matchesDistrict && matchesTeam;
     });
 
     return results.sort((a, b) => {
@@ -235,8 +259,11 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
       if (bTask === lowerTerm && aTask !== lowerTerm) return 1;
       return 0;
     });
-  }, [orders, searchTerm, currentUser, statusFilter, teamFilter]);
+  }, [orders, searchTerm, currentUser, statusFilter, districtFilter, teamFilter]);
 
+  // ... (Rest of the component methods: handleSaveSettings, fetchLocation, verifyImageWithAI, etc.)
+  // We keep them exactly as they were, just moving the return statement to include the new filters.
+  
   // --- Settings Handler ---
   const handleSaveSettings = () => {
     localStorage.setItem('qwen_api_key', qwenApiKey);
@@ -257,11 +284,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
     navigator.geolocation.getCurrentPosition(
       async (position) => {
         const { latitude, longitude } = position.coords;
-        
-        // 1. Convert WGS84 (GPS) to GCJ02 (Amap/China)
         const [gcjLat, gcjLon] = wgs84ToGcj02(latitude, longitude);
-
-        // 2. Call Amap API
         if (amapKey) {
             try {
                 const res = await fetch(`https://restapi.amap.com/v3/geocode/regeo?key=${amapKey}&location=${gcjLon},${gcjLat}&extensions=base`);
@@ -276,7 +299,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
                 setLocationText(`位置: ${latitude.toFixed(4)}, ${longitude.toFixed(4)}`);
             }
         } else {
-             // Fallback if key missing (though we have default)
              setLocationText(`位置: ${latitude.toFixed(4)}, ${longitude.toFixed(4)}`);
         }
       },
@@ -291,13 +313,10 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
   // --- AI Verification Logic (QWEN Only) ---
   const verifyImageWithAI = async () => {
     if (!photoData || !completionTarget) return;
-
     setIsVerifying(true);
     setVerificationResult(null);
-
     try {
       if (!qwenApiKey) throw new Error("未配置阿里云 API Key。请在设置中输入。");
-
       const promptText = `
         Task: Extract all alphanumeric strings found in this image.
         Instructions:
@@ -307,39 +326,25 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
         4. Return a JSON object with an array of strings.
         Output Format: {"candidates": ["string1", "string2"]}
       `;
-
-      // Call Qwen
       const responseText = await callQwenVL(qwenApiKey, photoData, promptText);
       console.log(`[QWEN] OCR Response:`, responseText);
-
-      // Parse and Compare
       let candidates: string[] = [];
       try {
-        // Extract JSON block if marked down
         const jsonMatch = responseText.match(/```json\n([\s\S]*?)\n```/) || responseText.match(/\{[\s\S]*\}/);
         const jsonStr = jsonMatch ? jsonMatch[0].replace(/```json/g, '').replace(/```/g, '') : responseText;
-        
         const parsed = JSON.parse(jsonStr);
         candidates = parsed.candidates || [];
       } catch (e) {
         console.warn("JSON Parse Failed", e);
-        // Fallback regex
         const matches = responseText.match(/[A-Z0-9\-\:]{6,}/gi);
         if (matches) candidates = Array.from(matches);
       }
-
       if (candidates.length === 0) {
-        setVerificationResult({
-          match: false,
-          detected: "未检测到文字",
-          message: "无法从图片中识别出任何有效的字母数字串，请尝试更清晰的角度。"
-        });
+        setVerificationResult({ match: false, detected: "未检测到文字", message: "无法从图片中识别出任何有效的字母数字串，请尝试更清晰的角度。" });
         return;
       }
-
       const targetCode = completionTarget.serialCode;
       let bestMatch = { match: false, reason: "未找到匹配项", score: -1, detected: "" };
-      
       for (const cand of candidates) {
         const result = strictCompare(targetCode, cand);
         if (result.match) {
@@ -351,32 +356,14 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
           }
         }
       }
-
-      setVerificationResult({
-        match: bestMatch.match,
-        detected: bestMatch.detected || candidates[0],
-        message: bestMatch.match 
-          ? bestMatch.reason 
-          : `匹配失败: ${bestMatch.reason || "图片中的文字与订单不符"}`
-      });
-
+      setVerificationResult({ match: bestMatch.match, detected: bestMatch.detected || candidates[0], message: bestMatch.match ? bestMatch.reason : `匹配失败: ${bestMatch.reason || "图片中的文字与订单不符"}` });
     } catch (error: any) {
       console.error("AI Verification Error:", error);
-      
       let msg = `服务错误: ${error.message || "请重试"}`;
       let detected = "系统错误";
-
       const isQuotaError = error.message.includes("429") || error.message.includes("quota");
-      if (isQuotaError) {
-        msg = "请求过于频繁(429)。";
-        detected = "配额超限";
-      }
-
-      setVerificationResult({
-        match: false,
-        detected: detected,
-        message: msg
-      });
+      if (isQuotaError) { msg = "请求过于频繁(429)。"; detected = "配额超限"; }
+      setVerificationResult({ match: false, detected: detected, message: msg });
     } finally {
       setIsVerifying(false);
     }
@@ -386,9 +373,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
   const startCamera = async () => {
     setCameraError(null);
     setIsCameraOpen(true);
-    // Fetch location when camera starts
     fetchLocation();
-
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
       if (videoRef.current) videoRef.current.srcObject = stream;
@@ -453,33 +438,19 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
   const addWatermarkToCanvas = (canvas: HTMLCanvasElement) => {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    
     const width = canvas.width;
     const height = canvas.height;
-    
-    // 动态调整字体大小：基于宽度的 3.5%，但不小于 16px，不大于 60px
-    // 这样在低分辨率预览和高分辨率拍摄时都能看清
     const fontSize = Math.max(16, Math.min(60, Math.floor(width * 0.035)));
     const lineHeight = fontSize * 1.3;
-    const padding = fontSize * 0.6; // 内边距
-    const margin = fontSize * 0.6;  // 距离边缘的距离 (防裁剪)
-
-    // 准备文本内容
+    const padding = fontSize * 0.6;
+    const margin = fontSize * 0.6;
     const now = new Date();
     const timeStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
     const addrStr = locationText || "位置信息获取中...";
-
     ctx.font = `bold ${fontSize}px sans-serif`;
-    
-    // --- 文本换行逻辑 ---
-    // 最大文本宽度 = 画布宽度 - 两侧外边距 - 两侧内边距
-    // 确保文字不会超出画布宽度
     const maxTextWidth = width - (margin * 2) - (padding * 2);
-    
-    // 拆分地址字符串（支持中文自动换行）
     const addressLines: string[] = [];
     let currentLine = '';
-    
     for (const char of addrStr) {
         const testLine = currentLine + char;
         const metrics = ctx.measureText(testLine);
@@ -491,38 +462,24 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
         }
     }
     addressLines.push(currentLine);
-
-    // 计算盒子尺寸
     let maxContentWidth = ctx.measureText(timeStr).width;
     for (const line of addressLines) {
         const m = ctx.measureText(line);
         if (m.width > maxContentWidth) maxContentWidth = m.width;
     }
-
     const boxWidth = maxContentWidth + (padding * 2);
-    // 总高度 = 地址行数 * 行高 + 时间行高 + 内边距 * 2 + 额外间隔
     const boxHeight = (addressLines.length * lineHeight) + lineHeight + (padding * 2) + (lineHeight * 0.2);
-
-    // 定位：右下角
     const x = width - boxWidth - margin;
     const y = height - boxHeight - margin;
-
-    // 绘制半透明背景框
     ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
     ctx.fillRect(x, y, boxWidth, boxHeight);
-
-    // 绘制文本
     ctx.fillStyle = '#ffffff';
     ctx.textBaseline = 'top';
-
-    // 绘制地址（多行）
     let currentY = y + padding;
     for (const line of addressLines) {
         ctx.fillText(line, x + padding, currentY);
         currentY += lineHeight;
     }
-
-    // 绘制时间（最后一行，加一点间距）
     currentY += (lineHeight * 0.2);
     ctx.fillText(timeStr, x + padding, currentY);
   };
@@ -601,7 +558,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
   };
 
   const handleReceive = (order: Order) => {
-    // Safety check for deadline
     if (order.deadline && new Date() > new Date(order.deadline)) {
         alert("该订单已过截止时间，无法操作。");
         return;
@@ -621,8 +577,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
     setPhotoData(order.completionPhoto || null);
     setVerificationResult(null); 
     setAudioData(null); 
-    
-    // Try to get location when opening modal for worker
     if (currentUser.role === 'WORKER' && (order.status === 'RECEIVED' || order.status === 'COMPLETED')) {
         fetchLocation();
     }
@@ -641,24 +595,17 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
 
   const submitCompletion = () => {
     if (!completionTarget) return;
-    
-    // Safety Check: Deadline
     if (currentUser.role === 'WORKER' && completionTarget.deadline && new Date() > new Date(completionTarget.deadline)) {
         alert("该订单已过截止时间，无法提交或修改。");
         closeCompletionModal();
         return;
     }
-
-    // 允许 WORKER 角色修改 COMPLETED 状态的订单
     if (currentUser.role === 'ADMIN') { closeCompletionModal(); return; }
-    
     if (!returnReason) { alert('请选择回单现象'); return; }
     if (!photoData) { alert('请拍摄现场照片'); return; }
 
     const currentHistory = Array.isArray(completionTarget.history) ? completionTarget.history : [];
     const verificationNote = verificationResult ? `(AI核对: ${verificationResult.match ? '通过' : '失败'} - 识别为 ${verificationResult.detected})` : '';
-    
-    // 判断是首次完成还是修改
     const isUpdate = completionTarget.status === 'COMPLETED';
     const actionDesc = isUpdate ? '修改了回单' : '完成回单';
 
@@ -690,20 +637,12 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
     setTransferTarget(null);
   };
 
-  // --- Deadline Edit Logic ---
   const openDeadlineModal = (order: Order) => {
     setDeadlineEditTarget({ id: order.id, oldDeadline: order.deadline || '' });
     if (order.deadline) {
-        // Adjust for datetime-local input (requires local ISO string)
         const d = new Date(order.deadline);
-        // Simply using slice(0,16) on ISO string gives UTC. 
-        // We need local time.
         const pad = (n: number) => n < 10 ? '0' + n : n;
-        const localIso = d.getFullYear() +
-            '-' + pad(d.getMonth() + 1) +
-            '-' + pad(d.getDate()) +
-            'T' + pad(d.getHours()) +
-            ':' + pad(d.getMinutes());
+        const localIso = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
         setNewDeadlineDate(localIso);
     } else {
         setNewDeadlineDate('');
@@ -714,7 +653,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
     if (!deadlineEditTarget) return;
     const currentHistory = orders.find(o => o.id === deadlineEditTarget.id)?.history || [];
     const newHistoryEntry = `${currentUser.name} 于 ${new Date().toLocaleString()} 修改截止时间`;
-    
     onUpdateOrder(deadlineEditTarget.id, {
         deadline: newDeadlineDate ? new Date(newDeadlineDate).toISOString() : null,
         history: [...currentHistory, newHistoryEntry]
@@ -742,10 +680,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
     }
   };
   
-  // 截止判断
   const isTargetExpired = completionTarget?.deadline && new Date() > new Date(completionTarget.deadline);
-
-  // 允许 WORKER 在 COMPLETED 状态下编辑 (前提：未过期)
   const canEditCompletion = (completionTarget?.status === 'RECEIVED' || completionTarget?.status === 'COMPLETED') && currentUser.role === 'WORKER' && !isTargetExpired;
 
   return (
@@ -1051,7 +986,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
               />
             </div>
 
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
                 <div className="relative">
                    <select 
                         value={statusFilter} 
@@ -1067,21 +1002,39 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
                     <Filter size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                 </div>
 
+                {/* District Filter */}
+                <div className="relative">
+                   <select 
+                        value={districtFilter} 
+                        onChange={handleDistrictChange}
+                        className="appearance-none pl-8 pr-8 py-2 border border-slate-300 rounded-md text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 min-w-[120px]"
+                    >
+                        <option value="ALL">全部区域</option>
+                        {DISTRICTS.map(d => (
+                            <option key={d} value={d}>{d}</option>
+                        ))}
+                    </select>
+                    <Map size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                </div>
+
+                {/* Team Filter */}
                 <div className="relative">
                     <select 
                         value={teamFilter} 
                         onChange={e => setTeamFilter(e.target.value)}
-                        className="appearance-none pl-8 pr-8 py-2 border border-slate-300 rounded-md text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 min-w-[120px]"
+                        className="appearance-none pl-8 pr-8 py-2 border border-slate-300 rounded-md text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 min-w-[150px] max-w-[200px]"
                     >
                         <option value="ALL">全部班组</option>
-                        {uniqueTeams.map(t => <option key={t} value={t}>{t}</option>)}
+                        {availableTeamsForFilter.map(t => (
+                            <option key={t} value={t}>{t}</option>
+                        ))}
                     </select>
-                    <UserCircle size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                    <Users size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                 </div>
             </div>
           </div>
           
-          <div className="flex gap-3 w-full xl:w-auto">
+          <div className="flex gap-3 w-full xl:w-auto mt-2 xl:mt-0">
              {currentUser.role === 'ADMIN' && (
                 <Button variant="outline" onClick={onReset} className="flex-1 xl:flex-none whitespace-nowrap">
                   <RotateCcw size={16} className="mr-2" /> 导入新数据
@@ -1208,13 +1161,15 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
                         )}
 
                         {currentUser.role === 'ADMIN' && (
-                          <Button 
-                            variant="secondary"
-                            onClick={() => openTransferModal(order)}
-                            className="w-full text-xs py-1"
-                          >
-                            <ArrowRightLeft size={14} className="mr-1" /> 转派
-                          </Button>
+                            <div className="flex gap-2 w-full">
+                              <Button 
+                                variant="secondary"
+                                onClick={() => openTransferModal(order)}
+                                className="flex-1 text-xs py-1"
+                              >
+                                <ArrowRightLeft size={14} className="mr-1" /> 转派
+                              </Button>
+                            </div>
                         )}
                       </div>
                     </div>
@@ -1230,9 +1185,9 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
                    ? `未找到属于 "${currentUser.name}" 的订单` 
                    : `未找到匹配 "${searchTerm}" 的订单`}
                </p>
-               {(statusFilter !== 'ALL' || teamFilter !== 'ALL') && (
+               {(statusFilter !== 'ALL' || districtFilter !== 'ALL' || teamFilter !== 'ALL') && (
                    <p className="mt-2 text-xs text-slate-500">
-                       (已应用筛选条件: {statusFilter !== 'ALL' ? '状态 ' : ''}{teamFilter !== 'ALL' ? '班组' : ''})
+                       (已应用筛选条件: {statusFilter !== 'ALL' ? '状态 ' : ''}{districtFilter !== 'ALL' ? '区域 ' : ''}{teamFilter !== 'ALL' ? '班组' : ''})
                    </p>
                )}
              </div>
