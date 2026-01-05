@@ -3,6 +3,7 @@ import { Order, User, OrderStatus, ReturnReason } from '../types';
 import { Button } from './Button';
 import { Download, Search, RotateCcw, CheckCircle2, UserCircle, ArrowRightLeft, CheckSquare, Camera, Mic, X, Image as ImageIcon, Aperture, ScanLine, BrainCircuit, Filter, Settings, Server, MapPin, Clock, Edit2, CalendarClock, Map, Users, Plus, Trash2, RefreshCw } from 'lucide-react';
 import ExcelJS from 'exceljs';
+import JSZip from 'jszip';
 import { TEAM_DATA, DISTRICTS } from '../data/teamData';
 
 interface ResultsViewProps {
@@ -559,6 +560,9 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
   const handleExport = async () => {
     setIsExporting(true);
     try {
+      const zip = new JSZip();
+      const attachmentsFolder = zip.folder("attachments");
+
       const workbook = new ExcelJS.Workbook();
       const sheet = workbook.addWorksheet('Orders');
       sheet.columns = [
@@ -573,11 +577,12 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
         { header: '回单备注', key: 'completionRemark', width: 30 },
         { header: '备注图片', key: 'remarkImages', width: 15 },
         { header: '现场照片', key: 'photo', width: 40 },
-        { header: '录音', key: 'audio', width: 10 },
+        { header: '录音', key: 'audio', width: 25 },
         { header: '最新处理', key: 'lastHistory', width: 40 },
       ];
+      
       for (const order of filteredOrders) {
-        const rowData = {
+        const row = sheet.addRow({
           taskName: order.taskName,
           businessNo: order.businessNo,
           team: order.team,
@@ -588,15 +593,15 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
           returnReason: order.returnReason || '',
           completionRemark: order.completionRemark || '',
           remarkImages: order.remarkImages && order.remarkImages.length > 0 ? `${order.remarkImages.length} 张图片` : '',
-          photo: '',
-          audio: order.completionAudio ? '有' : '无',
+          photo: '', // Handled below
+          audio: '无', // Handled below
           lastHistory: order.history[order.history.length - 1] || ''
-        };
-        const row = sheet.addRow(rowData);
+        });
         
-        let hasImage = false;
+        let rowHeight = 25;
 
-        // Embed Remark Image (First one)
+        // 1. Embed Images (Existing logic)
+        // Remark Images
         if (order.remarkImages && order.remarkImages.length > 0) {
            const base64 = order.remarkImages[0];
            if (base64) {
@@ -605,30 +610,61 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
                    tl: { col: 9, row: row.number - 1 }, 
                    br: { col: 10, row: row.number } 
                } as any);
-               hasImage = true;
+               rowHeight = 150;
            }
         }
-
-        // Embed Completion Photo
+        // Completion Photo
         if (order.completionPhoto) {
           const imageId = workbook.addImage({ base64: order.completionPhoto, extension: 'jpeg' });
           sheet.addImage(imageId, { tl: { col: 10, row: row.number - 1 }, br: { col: 11, row: row.number } } as any);
-          hasImage = true;
+          rowHeight = 150;
         }
 
-        if (hasImage) {
-          row.height = 150; 
-        } else {
-          row.height = 25;
+        // 2. Handle Audio (New Logic for ZIP)
+        if (order.completionAudio && attachmentsFolder) {
+            let extension = 'webm';
+            let base64Data = order.completionAudio;
+
+            // Simple MIME detection
+            const match = order.completionAudio.match(/^data:audio\/([a-z0-9]+);base64,(.+)$/);
+            if (match) {
+                const mimeSub = match[1];
+                base64Data = match[2];
+                if (mimeSub === 'mpeg') extension = 'mp3';
+                else if (mimeSub === 'mp4') extension = 'm4a';
+                else extension = mimeSub;
+            }
+
+            const fileName = `${order.businessNo}_${order.userName}_录音.${extension}`;
+            
+            // Add file to ZIP folder
+            attachmentsFolder.file(fileName, base64Data, { base64: true });
+
+            // Add Hyperlink to Excel Cell
+            const audioCell = row.getCell('audio');
+            audioCell.value = {
+                text: '点击播放录音',
+                hyperlink: `attachments/${fileName}`,
+                tooltip: '文件位于 attachments 文件夹中'
+            };
+            audioCell.font = { color: { argb: 'FF0000FF' }, underline: true };
         }
+
+        row.height = rowHeight;
         row.eachCell((cell) => { cell.alignment = { vertical: 'middle', wrapText: true }; });
       }
-      const buffer = await workbook.xlsx.writeBuffer() as any;
-      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-      const url = window.URL.createObjectURL(blob);
+
+      // Generate Excel Buffer
+      const excelBuffer = await workbook.xlsx.writeBuffer();
+      zip.file("订单列表.xlsx", excelBuffer);
+
+      // Generate Zip Blob
+      const zipBlob = await zip.generateAsync({ type: "blob" });
+      
+      const url = window.URL.createObjectURL(zipBlob);
       const anchor = document.createElement('a');
       anchor.href = url;
-      anchor.download = `orders_export_${currentUser.name}_${new Date().toISOString().slice(0,10)}.xlsx`;
+      anchor.download = `订单导出(含录音)_${currentUser.name}_${new Date().toISOString().slice(0,10)}.zip`;
       document.body.appendChild(anchor);
       anchor.click();
       document.body.removeChild(anchor);
@@ -1184,7 +1220,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
              </Button>
 
              <Button onClick={handleExport} className="flex-1 xl:flex-none whitespace-nowrap" isLoading={isExporting}>
-               <Download size={16} className="mr-2" /> 导出 Excel
+               <Download size={16} className="mr-2" /> 导出 Excel (含录音)
              </Button>
           </div>
         </div>
