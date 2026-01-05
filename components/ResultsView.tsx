@@ -10,12 +10,44 @@ interface ResultsViewProps {
   currentUser: User;
   onReset: () => void;
   onRefresh?: () => void;
-  onUpdateOrder: (orderId: string, updates: Partial<Order>) => void;
+  onUpdateOrder: (orderId: string, updates: Partial<Order>) => Promise<void>; // Updated signature to await
 }
 
-// --- STRICT JS COMPARISON LOGIC ---
+// --- UTILS ---
 const normalizeString = (str: string) => {
   return str.toUpperCase().replace(/[^A-Z0-9]/g, '');
+};
+
+// Image Compression Utility
+const compressBase64Image = (base64Str: string, maxWidth = 800, quality = 0.6): Promise<string> => {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.src = base64Str;
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      let width = img.width;
+      let height = img.height;
+
+      // Scale down
+      if (width > maxWidth) {
+        height = (height * maxWidth) / width;
+        width = maxWidth;
+      }
+
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(img, 0, 0, width, height);
+        // Compress to JPEG with lower quality
+        const compressedData = canvas.toDataURL('image/jpeg', quality);
+        resolve(compressedData);
+      } else {
+        resolve(base64Str); // Fallback
+      }
+    };
+    img.onerror = () => resolve(base64Str); // Fallback
+  });
 };
 
 // OCR Ambiguity Whitelist (Strict)
@@ -160,6 +192,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
   const [teamFilter, setTeamFilter] = useState<string>('ALL');
   const [isExporting, setIsExporting] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false); // Submission loading state
 
   // Settings State
   const [showSettings, setShowSettings] = useState(false);
@@ -646,7 +679,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
     setLocationText(''); 
   };
 
-  const submitCompletion = () => {
+  const submitCompletion = async () => {
     if (!completionTarget) return;
     if (currentUser.role === 'WORKER' && completionTarget.deadline && new Date() > new Date(completionTarget.deadline)) {
         alert("该订单已过截止时间，无法提交或修改。");
@@ -657,22 +690,41 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
     if (!returnReason) { alert('请选择回单现象'); return; }
     if (!photoData) { alert('请拍摄现场照片'); return; }
 
-    const currentHistory = Array.isArray(completionTarget.history) ? completionTarget.history : [];
-    const verificationNote = verificationResult ? `(AI核对: ${verificationResult.match ? '通过' : '失败'} - 识别为 ${verificationResult.detected})` : '';
-    const isUpdate = completionTarget.status === 'COMPLETED';
-    const actionDesc = isUpdate ? '修改了回单' : '完成回单';
+    setIsSubmitting(true);
 
-    onUpdateOrder(completionTarget.id, {
-      status: 'COMPLETED',
-      completedAt: new Date().toISOString(),
-      returnReason: returnReason as ReturnReason,
-      completionRemark: remark + (remark && verificationNote ? ' ' : '') + verificationNote,
-      remarkImages: remarkImages, // Save remark images
-      completionPhoto: photoData || undefined,
-      completionAudio: audioData?.data || undefined,
-      history: [...currentHistory, `${currentUser.name} 于 ${new Date().toLocaleString()} ${actionDesc} ${verificationNote}`]
-    });
-    closeCompletionModal();
+    try {
+        // --- Image Compression Logic ---
+        // Compress main photo
+        const compressedPhoto = await compressBase64Image(photoData);
+        
+        // Compress remark images
+        const compressedRemarkImages = await Promise.all(
+            remarkImages.map(img => compressBase64Image(img))
+        );
+        // -------------------------------
+
+        const currentHistory = Array.isArray(completionTarget.history) ? completionTarget.history : [];
+        const verificationNote = verificationResult ? `(AI核对: ${verificationResult.match ? '通过' : '失败'} - 识别为 ${verificationResult.detected})` : '';
+        const isUpdate = completionTarget.status === 'COMPLETED';
+        const actionDesc = isUpdate ? '修改了回单' : '完成回单';
+
+        await onUpdateOrder(completionTarget.id, {
+            status: 'COMPLETED',
+            completedAt: new Date().toISOString(),
+            returnReason: returnReason as ReturnReason,
+            completionRemark: remark + (remark && verificationNote ? ' ' : '') + verificationNote,
+            remarkImages: compressedRemarkImages, // Use compressed
+            completionPhoto: compressedPhoto, // Use compressed
+            completionAudio: audioData?.data || undefined,
+            history: [...currentHistory, `${currentUser.name} 于 ${new Date().toLocaleString()} ${actionDesc} ${verificationNote}`]
+        });
+        closeCompletionModal();
+    } catch (e) {
+        console.error("Submission error", e);
+        // Error handling is mostly done in onUpdateOrder/App.tsx, but we catch here to stop spinner
+    } finally {
+        setIsSubmitting(false);
+    }
   };
 
   const openTransferModal = (order: Order) => {
@@ -980,7 +1032,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
 
             <div className="p-5 border-t border-slate-100 flex gap-3 justify-end bg-slate-50 rounded-b-xl">
               <Button variant="outline" onClick={closeCompletionModal}>{canEditCompletion ? '取消' : '关闭'}</Button>
-              {canEditCompletion && <Button onClick={submitCompletion} disabled={!returnReason || !photoData}>提交回单</Button>}
+              {canEditCompletion && <Button onClick={submitCompletion} disabled={!returnReason || !photoData} isLoading={isSubmitting}>提交回单</Button>}
             </div>
           </div>
         </div>
