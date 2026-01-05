@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { Order, User, OrderStatus, ReturnReason } from '../types';
 import { Button } from './Button';
-import { Download, Search, RotateCcw, CheckCircle2, UserCircle, ArrowRightLeft, CheckSquare, Camera, Mic, X, Image as ImageIcon, Aperture, ScanLine, BrainCircuit, Filter, Settings, Server, MapPin, Clock, Edit2, CalendarClock, Map, Users, Plus, Trash2, RefreshCw } from 'lucide-react';
+import { Download, Search, RotateCcw, CheckCircle2, UserCircle, ArrowRightLeft, CheckSquare, Camera, Mic, X, Image as ImageIcon, Aperture, ScanLine, BrainCircuit, Filter, Settings, Server, MapPin, Clock, Edit2, CalendarClock, Map, Users, Plus, Trash2, RefreshCw, ShieldCheck, ShieldAlert } from 'lucide-react';
 import ExcelJS from 'exceljs';
 import JSZip from 'jszip';
 import { TEAM_DATA, DISTRICTS } from '../data/teamData';
@@ -572,6 +572,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
         { header: '姓名', key: 'userName', width: 15 },
         { header: '串码', key: 'serialCode', width: 25 },
         { header: '状态', key: 'status', width: 10 },
+        { header: '审核状态', key: 'auditStatus', width: 12 }, // New Column
         { header: '截止时间', key: 'deadline', width: 20 },
         { header: '回单现象', key: 'returnReason', width: 20 },
         { header: '回单备注', key: 'completionRemark', width: 30 },
@@ -589,6 +590,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
           userName: order.userName,
           serialCode: order.serialCode,
           status: getStatusLabel(order.status),
+          auditStatus: order.auditStatus === 'PASSED' ? '审核通过' : (order.auditStatus === 'FAILED' ? '审核未通过' : ''),
           deadline: order.deadline ? new Date(order.deadline).toLocaleString() : '',
           returnReason: order.returnReason || '',
           completionRemark: order.completionRemark || '',
@@ -607,8 +609,8 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
            if (base64) {
                const imageId = workbook.addImage({ base64: base64, extension: 'jpeg' });
                sheet.addImage(imageId, { 
-                   tl: { col: 9, row: row.number - 1 }, 
-                   br: { col: 10, row: row.number } 
+                   tl: { col: 10, row: row.number - 1 }, // Adjusted index due to new column
+                   br: { col: 11, row: row.number } 
                } as any);
                rowHeight = 150;
            }
@@ -616,7 +618,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
         // Completion Photo
         if (order.completionPhoto) {
           const imageId = workbook.addImage({ base64: order.completionPhoto, extension: 'jpeg' });
-          sheet.addImage(imageId, { tl: { col: 10, row: row.number - 1 }, br: { col: 11, row: row.number } } as any);
+          sheet.addImage(imageId, { tl: { col: 11, row: row.number - 1 }, br: { col: 12, row: row.number } } as any);
           rowHeight = 150;
         }
 
@@ -744,14 +746,19 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
         const isUpdate = completionTarget.status === 'COMPLETED';
         const actionDesc = isUpdate ? '修改了回单' : '完成回单';
 
+        // Determine Audit Status based on verification result
+        // If user didn't run AI, verificationResult is null, so auditStatus remains undefined (or unchanged if we were to merge)
+        const newAuditStatus = verificationResult ? (verificationResult.match ? 'PASSED' : 'FAILED') : undefined;
+
         await onUpdateOrder(completionTarget.id, {
             status: 'COMPLETED',
             completedAt: new Date().toISOString(),
             returnReason: returnReason as ReturnReason,
             completionRemark: remark + (remark && verificationNote ? ' ' : '') + verificationNote,
-            remarkImages: compressedRemarkImages, // Use compressed
-            completionPhoto: compressedPhoto, // Use compressed
+            remarkImages: compressedRemarkImages, 
+            completionPhoto: compressedPhoto, 
             completionAudio: audioData?.data || undefined,
+            auditStatus: newAuditStatus, // Save the audit result
             history: [...currentHistory, `${currentUser.name} 于 ${new Date().toLocaleString()} ${actionDesc} ${verificationNote}`]
         });
         closeCompletionModal();
@@ -1244,9 +1251,22 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
                       <span className="bg-slate-800 text-white text-xs font-semibold px-2.5 py-0.5 rounded">
                         {order.taskName}
                       </span>
-                      <span className={`text-xs font-semibold px-2 py-0.5 rounded ${getStatusColor(order.status)}`}>
-                        {getStatusLabel(order.status)}
-                      </span>
+                      <div className="flex items-center gap-1">
+                          {/* Audit Status Badge */}
+                          {order.auditStatus === 'PASSED' && (
+                              <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded bg-teal-100 text-teal-700 border border-teal-200">
+                                  <ShieldCheck size={10} /> 审核通过
+                              </span>
+                          )}
+                          {order.auditStatus === 'FAILED' && (
+                              <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded bg-rose-100 text-rose-700 border border-rose-200">
+                                  <ShieldAlert size={10} /> 审核未通过
+                              </span>
+                          )}
+                          <span className={`text-xs font-semibold px-2 py-0.5 rounded ${getStatusColor(order.status)}`}>
+                            {getStatusLabel(order.status)}
+                          </span>
+                      </div>
                     </div>
                     
                     <div className="space-y-1">

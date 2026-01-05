@@ -147,17 +147,31 @@ const App: React.FC = () => {
     const { error } = await supabase.from('orders').insert(newOrders);
 
     if (error) {
-      // Strict check for missing 'deadline' column error
-      const isMissingDeadlineError = error.message && error.message.includes('deadline') && (error.message.includes('does not exist') || error.message.includes('find the'));
+      // Strict check for missing columns error
+      const isMissingDeadline = error.message && error.message.includes('deadline') && (error.message.includes('does not exist') || error.message.includes('find the'));
+      const isMissingRemarkImages = error.message && error.message.includes('remarkImages') && (error.message.includes('does not exist') || error.message.includes('find the'));
+      const isMissingAuditStatus = error.message && error.message.includes('auditStatus') && (error.message.includes('does not exist') || error.message.includes('find the'));
 
-      if (isMissingDeadlineError) {
-         console.warn("Database missing column, retrying without deadline...");
-         // Retry without the problematic field
-         const safeOrders = newOrders.map(({ deadline, ...rest }) => rest);
+      if (isMissingDeadline || isMissingRemarkImages || isMissingAuditStatus) {
+         console.warn("Database missing column, retrying without problematic fields...");
+         
+         const safeOrders = newOrders.map(o => {
+            const safe = { ...o };
+            if (isMissingDeadline) delete safe.deadline;
+            if (isMissingRemarkImages) delete safe.remarkImages;
+            if (isMissingAuditStatus) delete safe.auditStatus;
+            return safe;
+         });
+         
          const retry = await supabase.from('orders').insert(safeOrders);
          
          if (!retry.error) {
-            alert(`部分成功：订单已导入，但“截止时间”无法保存，因为云端数据库缺少 'deadline' 列。\n\n请在 Supabase SQL 编辑器中运行以下命令修复：\nALTER TABLE orders ADD COLUMN deadline TIMESTAMPTZ;`);
+            const missing = [];
+            if (isMissingDeadline) missing.push('deadline');
+            if (isMissingRemarkImages) missing.push('remarkImages');
+            if (isMissingAuditStatus) missing.push('auditStatus');
+            
+            alert(`部分成功：订单已导入，但字段 (${missing.join(', ')}) 未同步，因为数据库缺少对应列。\n\n请在 Supabase SQL 编辑器中运行 SQL 修复。`);
             setStep('RESULTS');
             setLoading(false);
             return;
@@ -189,26 +203,51 @@ const App: React.FC = () => {
     if (error) {
       console.error('Update failed:', JSON.stringify(error, null, 2));
       
-      // Strict check for missing 'deadline' column error
-      const isMissingDeadlineError = error.message && error.message.includes('deadline') && (error.message.includes('does not exist') || error.message.includes('find the'));
+      // Strict check for missing columns
+      const checkMissing = (col: string) => 
+        error.message && error.message.includes(col) && 
+        (error.message.includes('does not exist') || error.message.includes('find the') || error.message.includes('schema cache'));
 
-      if (isMissingDeadlineError) {
-         // Attempt recovery: If we were trying to save other data along with deadline, strip deadline and retry
-         if ('deadline' in updates) {
-             const { deadline, ...safeUpdates } = updates;
-             // If there is actual data left to save (e.g. status, photos), retry
-             if (Object.keys(safeUpdates).length > 0) {
-                 const retry = await supabase.from('orders').update(safeUpdates).eq('id', orderId);
-                 if (!retry.error) {
-                     alert("保存成功，但“截止时间”未同步。\n\n原因：数据库缺少 'deadline' 列。\n请管理员运行 SQL: ALTER TABLE orders ADD COLUMN deadline TIMESTAMPTZ;");
-                     return;
-                 }
-             } else {
-                 // User was ONLY changing deadline
-                 alert("无法设置截止时间：数据库缺少 'deadline' 列。\n\n请管理员在 Supabase SQL 编辑器中运行以下命令修复：\nALTER TABLE orders ADD COLUMN deadline TIMESTAMPTZ;");
-                 fetchOrders(); // Revert local state
+      const isMissingDeadline = checkMissing('deadline');
+      const isMissingRemarkImages = checkMissing('remarkImages');
+      const isMissingAuditStatus = checkMissing('auditStatus');
+
+      if (isMissingDeadline || isMissingRemarkImages || isMissingAuditStatus) {
+         const safeUpdates = { ...updates };
+         const missingCols: string[] = [];
+
+         if (isMissingDeadline) {
+             delete safeUpdates.deadline;
+             missingCols.push('deadline');
+         }
+         if (isMissingRemarkImages) {
+             delete safeUpdates.remarkImages;
+             missingCols.push('remarkImages');
+         }
+         if (isMissingAuditStatus) {
+             delete safeUpdates.auditStatus;
+             missingCols.push('auditStatus');
+         }
+
+         // Retry if we still have data to save
+         if (Object.keys(safeUpdates).length > 0) {
+             const retry = await supabase.from('orders').update(safeUpdates).eq('id', orderId);
+             if (!retry.error) {
+                 const sqls = missingCols.map(c => {
+                    if (c === 'deadline') return 'ALTER TABLE orders ADD COLUMN deadline TIMESTAMPTZ;';
+                    if (c === 'remarkImages') return 'ALTER TABLE orders ADD COLUMN "remarkImages" TEXT[];';
+                    if (c === 'auditStatus') return 'ALTER TABLE orders ADD COLUMN "auditStatus" TEXT;';
+                    return '';
+                 }).join('\n');
+
+                 alert(`保存成功，但部分字段 (${missingCols.join(', ')}) 未同步。\n\n原因：数据库缺少对应列。\n请管理员运行以下 SQL 修复:\n\n${sqls}`);
                  return;
              }
+         } else {
+             // If we stripped everything, fail gracefully
+             alert(`操作失败：数据库缺少列 (${missingCols.join(', ')})。\n请管理员运行 SQL 修复。`);
+             fetchOrders(); // Revert
+             return;
          }
       }
       

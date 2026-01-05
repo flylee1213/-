@@ -25,6 +25,9 @@ export interface Order {
   remarkImages?: string[]; // New: Array of Base64 strings for remark attachments
   completionPhoto?: string; // Base64 string
   completionAudio?: string; // Base64 string or filename
+  
+  // AI Verification Status
+  auditStatus?: 'PASSED' | 'FAILED'; // New: Result of the AI check
 }
 
 export interface RawRow {
