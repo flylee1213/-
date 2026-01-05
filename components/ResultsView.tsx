@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { Order, User, OrderStatus, ReturnReason } from '../types';
 import { Button } from './Button';
-import { Download, Search, RotateCcw, CheckCircle2, UserCircle, ArrowRightLeft, CheckSquare, Camera, Mic, X, Image as ImageIcon, Aperture, ScanLine, BrainCircuit, Filter, Settings, Server, MapPin, Clock, Edit2, CalendarClock, Map, Users } from 'lucide-react';
+import { Download, Search, RotateCcw, CheckCircle2, UserCircle, ArrowRightLeft, CheckSquare, Camera, Mic, X, Image as ImageIcon, Aperture, ScanLine, BrainCircuit, Filter, Settings, Server, MapPin, Clock, Edit2, CalendarClock, Map, Users, Plus, Trash2 } from 'lucide-react';
 import ExcelJS from 'exceljs';
 import { TEAM_DATA, DISTRICTS } from '../data/teamData';
 
@@ -178,6 +178,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
   const [completionTarget, setCompletionTarget] = useState<Order | null>(null);
   const [returnReason, setReturnReason] = useState<ReturnReason | ''>('');
   const [remark, setRemark] = useState('');
+  const [remarkImages, setRemarkImages] = useState<string[]>([]); // New state for remark images
   const [photoData, setPhotoData] = useState<string | null>(null); // Base64
   const [audioData, setAudioData] = useState<{name: string, data: string} | null>(null);
   
@@ -261,9 +262,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
     });
   }, [orders, searchTerm, currentUser, statusFilter, districtFilter, teamFilter]);
 
-  // ... (Rest of the component methods: handleSaveSettings, fetchLocation, verifyImageWithAI, etc.)
-  // We keep them exactly as they were, just moving the return statement to include the new filters.
-  
   // --- Settings Handler ---
   const handleSaveSettings = () => {
     localStorage.setItem('qwen_api_key', qwenApiKey);
@@ -495,6 +493,26 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
     }
   };
 
+  // --- Remark Image Handlers ---
+  const handleRemarkImageAdd = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      const files = Array.from(e.target.files);
+      files.forEach(file => {
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          if (ev.target?.result) {
+            setRemarkImages(prev => [...prev, ev.target!.result as string]);
+          }
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+  };
+
+  const removeRemarkImage = (index: number) => {
+    setRemarkImages(prev => prev.filter((_, i) => i !== index));
+  };
+
   const handleExport = async () => {
     setIsExporting(true);
     try {
@@ -510,6 +528,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
         { header: '截止时间', key: 'deadline', width: 20 },
         { header: '回单现象', key: 'returnReason', width: 20 },
         { header: '回单备注', key: 'completionRemark', width: 30 },
+        { header: '备注图片', key: 'remarkImages', width: 15 },
         { header: '现场照片', key: 'photo', width: 40 },
         { header: '录音', key: 'audio', width: 10 },
         { header: '最新处理', key: 'lastHistory', width: 40 },
@@ -525,21 +544,43 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
           deadline: order.deadline ? new Date(order.deadline).toLocaleString() : '',
           returnReason: order.returnReason || '',
           completionRemark: order.completionRemark || '',
+          remarkImages: order.remarkImages && order.remarkImages.length > 0 ? `${order.remarkImages.length} 张图片` : '',
           photo: '',
           audio: order.completionAudio ? '有' : '无',
           lastHistory: order.history[order.history.length - 1] || ''
         };
         const row = sheet.addRow(rowData);
+        
+        let hasImage = false;
+
+        // Embed Remark Image (First one)
+        if (order.remarkImages && order.remarkImages.length > 0) {
+           const base64 = order.remarkImages[0];
+           if (base64) {
+               const imageId = workbook.addImage({ base64: base64, extension: 'jpeg' });
+               sheet.addImage(imageId, { 
+                   tl: { col: 9, row: row.number - 1 }, 
+                   br: { col: 10, row: row.number } 
+               } as any);
+               hasImage = true;
+           }
+        }
+
+        // Embed Completion Photo
         if (order.completionPhoto) {
           const imageId = workbook.addImage({ base64: order.completionPhoto, extension: 'jpeg' });
-          sheet.addImage(imageId, { tl: { col: 9, row: row.number - 1 }, br: { col: 10, row: row.number } } as any);
+          sheet.addImage(imageId, { tl: { col: 10, row: row.number - 1 }, br: { col: 11, row: row.number } } as any);
+          hasImage = true;
+        }
+
+        if (hasImage) {
           row.height = 150; 
         } else {
           row.height = 25;
         }
         row.eachCell((cell) => { cell.alignment = { vertical: 'middle', wrapText: true }; });
       }
-      const buffer = await workbook.xlsx.writeBuffer();
+      const buffer = await workbook.xlsx.writeBuffer() as any;
       const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
       const url = window.URL.createObjectURL(blob);
       const anchor = document.createElement('a');
@@ -574,6 +615,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
     setCompletionTarget(order);
     setReturnReason(order.returnReason || '');
     setRemark(order.completionRemark || '');
+    setRemarkImages(order.remarkImages || []); // Load existing remark images
     setPhotoData(order.completionPhoto || null);
     setVerificationResult(null); 
     setAudioData(null); 
@@ -587,6 +629,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
     stopCamera();
     setReturnReason('');
     setRemark('');
+    setRemarkImages([]);
     setPhotoData(null);
     setAudioData(null);
     setVerificationResult(null);
@@ -614,6 +657,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
       completedAt: new Date().toISOString(),
       returnReason: returnReason as ReturnReason,
       completionRemark: remark + (remark && verificationNote ? ' ' : '') + verificationNote,
+      remarkImages: remarkImages, // Save remark images
       completionPhoto: photoData || undefined,
       completionAudio: audioData?.data || undefined,
       history: [...currentHistory, `${currentUser.name} 于 ${new Date().toLocaleString()} ${actionDesc} ${verificationNote}`]
@@ -779,15 +823,40 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
               </div>
 
               <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-2">2. 备注</label>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">2. 备注 & 附件</label>
                 <textarea 
-                  className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100 disabled:text-slate-500"
+                  className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100 disabled:text-slate-500 mb-2"
                   rows={3}
                   placeholder="填写其他现场情况说明..."
                   value={remark}
                   onChange={e => setRemark(e.target.value)}
                   disabled={!canEditCompletion}
                 />
+                {/* Remark Images Section */}
+                <div className="space-y-2">
+                    <div className="flex flex-wrap gap-2">
+                      {remarkImages.map((img, idx) => (
+                        <div key={idx} className="relative w-16 h-16 group border border-slate-200 rounded-lg overflow-hidden">
+                          <img src={img} alt={`附件 ${idx + 1}`} className="w-full h-full object-cover" />
+                          {canEditCompletion && (
+                            <button 
+                                onClick={() => removeRemarkImage(idx)}
+                                className="absolute inset-0 bg-black/50 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                            >
+                                <Trash2 size={16} />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                      {canEditCompletion && (
+                         <label className="w-16 h-16 flex flex-col items-center justify-center border-2 border-dashed border-slate-300 rounded-lg cursor-pointer hover:border-blue-500 hover:bg-blue-50 text-slate-400 hover:text-blue-500 transition-all">
+                             <Plus size={20} />
+                             <input type="file" accept="image/*" multiple className="hidden" onChange={handleRemarkImageAdd} />
+                         </label>
+                      )}
+                    </div>
+                    <p className="text-[10px] text-slate-400">可上传多张补充图片(非强制)</p>
+                </div>
               </div>
 
               <div>

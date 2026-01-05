@@ -1,3 +1,4 @@
+
 export type OrderStatus = 'PENDING' | 'DISPATCHED' | 'RECEIVED' | 'COMPLETED';
 
 export type ReturnReason = '家中无人无法上门' | '终端在现场使用' | '目标终端无法找到' | '其他';
@@ -21,6 +22,7 @@ export interface Order {
   // Completion details
   returnReason?: ReturnReason;
   completionRemark?: string;
+  remarkImages?: string[]; // New: Array of Base64 strings for remark attachments
   completionPhoto?: string; // Base64 string
   completionAudio?: string; // Base64 string or filename
 }
