@@ -193,9 +193,12 @@ const App: React.FC = () => {
          alert("同步警告：数据库缺少 'deadline' 列，截止时间修改仅在本地生效。\n请管理员运行 SQL: ALTER TABLE orders ADD COLUMN deadline TIMESTAMPTZ;");
          return;
       }
-
-      // Suppress alert for better UX in demo mode if it's just a network blip, 
-      // but log it.
+      
+      // CRITICAL ALERT: Inform user if save failed (e.g. payload too large or network error)
+      alert(`保存失败！您的更改可能未同步到服务器。\n\n原因可能是图片过大或网络不稳定。\n建议：\n1. 尝试减少图片数量\n2. 检查网络连接\n\n错误信息: ${error.message}`);
+      
+      // Revert local state to avoid confusion (Fetch latest from server)
+      fetchOrders();
     }
   };
 
@@ -302,7 +305,8 @@ const App: React.FC = () => {
             <ResultsView 
               orders={orders} 
               currentUser={user}
-              onReset={resetToUpload} 
+              onReset={resetToUpload}
+              onRefresh={fetchOrders}
               onUpdateOrder={handleOrderUpdate}
             />
           </div>

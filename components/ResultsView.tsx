@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { Order, User, OrderStatus, ReturnReason } from '../types';
 import { Button } from './Button';
-import { Download, Search, RotateCcw, CheckCircle2, UserCircle, ArrowRightLeft, CheckSquare, Camera, Mic, X, Image as ImageIcon, Aperture, ScanLine, BrainCircuit, Filter, Settings, Server, MapPin, Clock, Edit2, CalendarClock, Map, Users, Plus, Trash2 } from 'lucide-react';
+import { Download, Search, RotateCcw, CheckCircle2, UserCircle, ArrowRightLeft, CheckSquare, Camera, Mic, X, Image as ImageIcon, Aperture, ScanLine, BrainCircuit, Filter, Settings, Server, MapPin, Clock, Edit2, CalendarClock, Map, Users, Plus, Trash2, RefreshCw } from 'lucide-react';
 import ExcelJS from 'exceljs';
 import { TEAM_DATA, DISTRICTS } from '../data/teamData';
 
@@ -9,6 +9,7 @@ interface ResultsViewProps {
   orders: Order[];
   currentUser: User;
   onReset: () => void;
+  onRefresh?: () => void;
   onUpdateOrder: (orderId: string, updates: Partial<Order>) => void;
 }
 
@@ -152,12 +153,13 @@ const callQwenVL = async (apiKey: string, base64Image: string, prompt: string) =
   return data.choices?.[0]?.message?.content || "{}";
 };
 
-export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, onReset, onUpdateOrder }) => {
+export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, onReset, onRefresh, onUpdateOrder }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<OrderStatus | 'ALL'>('ALL');
   const [districtFilter, setDistrictFilter] = useState<string>('ALL');
   const [teamFilter, setTeamFilter] = useState<string>('ALL');
   const [isExporting, setIsExporting] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   // Settings State
   const [showSettings, setShowSettings] = useState(false);
@@ -511,6 +513,14 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
 
   const removeRemarkImage = (index: number) => {
     setRemarkImages(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handleManualRefresh = async () => {
+    if (onRefresh) {
+        setIsRefreshing(true);
+        await onRefresh();
+        setIsRefreshing(false);
+    }
   };
 
   const handleExport = async () => {
@@ -1109,6 +1119,13 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
                   <RotateCcw size={16} className="mr-2" /> 导入新数据
                 </Button>
              )}
+             
+             {onRefresh && (
+                <Button variant="outline" onClick={handleManualRefresh} isLoading={isRefreshing} className="flex-1 xl:flex-none px-3 whitespace-nowrap" title="刷新数据">
+                  <RefreshCw size={16} className={isRefreshing ? 'animate-spin' : ''} /> {isRefreshing ? '' : '刷新'}
+                </Button>
+             )}
+
              {/* Settings Button (Simple) */}
              <Button variant="secondary" onClick={() => setShowSettings(true)} className="px-3" title="系统设置">
                <Settings size={18} />
@@ -1219,13 +1236,14 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
                           </Button>
                         )}
 
-                        {(currentUser.role === 'WORKER' || currentUser.role === 'ADMIN') && order.status === 'COMPLETED' && (
+                        {(currentUser.role === 'WORKER' || currentUser.role === 'ADMIN') && (order.status === 'COMPLETED' || order.status === 'RECEIVED') && (
                           <Button 
                             variant="outline"
                             onClick={() => openCompletionModal(order)}
                             className="w-full text-xs py-1"
                           >
-                            {currentUser.role === 'WORKER' ? (isExpired ? '查看详情 (已截止)' : '查看/修改') : '查看回单'}
+                             {/* Allow viewing even if processing (RECEIVED) to check status manually if sync failed visually */}
+                             {order.status === 'RECEIVED' ? (currentUser.role === 'ADMIN' ? '查看详情 (处理中)' : '处理中') : (currentUser.role === 'WORKER' ? (isExpired ? '查看详情 (已截止)' : '查看/修改') : '查看回单')}
                           </Button>
                         )}
 
