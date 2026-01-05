@@ -147,9 +147,10 @@ const App: React.FC = () => {
     const { error } = await supabase.from('orders').insert(newOrders);
 
     if (error) {
-      // Check for missing column error (Graceful degradation)
-      // "Could not find the 'deadline' column"
-      if (error.message && (error.message.includes('deadline') || error.message.includes('column'))) {
+      // Strict check for missing 'deadline' column error
+      const isMissingDeadlineError = error.message && error.message.includes('deadline') && (error.message.includes('does not exist') || error.message.includes('find the'));
+
+      if (isMissingDeadlineError) {
          console.warn("Database missing column, retrying without deadline...");
          // Retry without the problematic field
          const safeOrders = newOrders.map(({ deadline, ...rest }) => rest);
@@ -166,7 +167,7 @@ const App: React.FC = () => {
       // Offline/Error Fallback
       console.warn("Supabase insert failed, falling back to local state:", error);
       setOrders(prev => [...newOrders, ...prev]);
-      alert(`注意：云端同步失败（${error.message || '未知错误'}）。已切换至本地演示模式，仅在当前浏览器会话有效。`);
+      alert(`云端同步失败！\n\n原因: ${error.message}\n\n系统已切换至本地演示模式，数据仅在当前会话有效。`);
       setStep('RESULTS');
     } else {
       alert(`成功导入 ${newOrders.length} 条订单！` + (deadline ? ` 截止时间: ${new Date(deadline).toLocaleString()}` : ''));
@@ -188,14 +189,31 @@ const App: React.FC = () => {
     if (error) {
       console.error('Update failed:', JSON.stringify(error, null, 2));
       
-      // Handle missing column specific error on update
-      if (error.message && (error.message.includes('deadline') || error.message.includes('column'))) {
-         alert("同步警告：数据库缺少 'deadline' 列，截止时间修改仅在本地生效。\n请管理员运行 SQL: ALTER TABLE orders ADD COLUMN deadline TIMESTAMPTZ;");
-         return;
+      // Strict check for missing 'deadline' column error
+      const isMissingDeadlineError = error.message && error.message.includes('deadline') && (error.message.includes('does not exist') || error.message.includes('find the'));
+
+      if (isMissingDeadlineError) {
+         // Attempt recovery: If we were trying to save other data along with deadline, strip deadline and retry
+         if ('deadline' in updates) {
+             const { deadline, ...safeUpdates } = updates;
+             // If there is actual data left to save (e.g. status, photos), retry
+             if (Object.keys(safeUpdates).length > 0) {
+                 const retry = await supabase.from('orders').update(safeUpdates).eq('id', orderId);
+                 if (!retry.error) {
+                     alert("保存成功，但“截止时间”未同步。\n\n原因：数据库缺少 'deadline' 列。\n请管理员运行 SQL: ALTER TABLE orders ADD COLUMN deadline TIMESTAMPTZ;");
+                     return;
+                 }
+             } else {
+                 // User was ONLY changing deadline
+                 alert("无法设置截止时间：数据库缺少 'deadline' 列。\n\n请管理员在 Supabase SQL 编辑器中运行以下命令修复：\nALTER TABLE orders ADD COLUMN deadline TIMESTAMPTZ;");
+                 fetchOrders(); // Revert local state
+                 return;
+             }
+         }
       }
       
       // CRITICAL ALERT: Inform user if save failed (e.g. payload too large or network error)
-      alert(`保存失败！您的更改可能未同步到服务器。\n\n原因可能是图片过大或网络不稳定。\n建议：\n1. 尝试减少图片数量\n2. 检查网络连接\n\n错误信息: ${error.message}`);
+      alert(`保存失败！您的更改可能未同步到服务器。\n\n建议：\n1. 尝试减少图片数量\n2. 检查网络连接\n\n错误详情: ${error.message}`);
       
       // Revert local state to avoid confusion (Fetch latest from server)
       fetchOrders();
