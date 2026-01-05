@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Button } from './Button';
 import { User, UserRole } from '../types';
-import { Shield, User as UserIcon, LogIn, Users, Map } from 'lucide-react';
+import { Shield, User as UserIcon, LogIn, Users, Map, Lock } from 'lucide-react';
 import { TEAM_DATA, DISTRICTS } from '../data/teamData';
 
 interface LoginScreenProps {
@@ -12,6 +12,7 @@ interface LoginScreenProps {
 export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
   const [role, setRole] = useState<UserRole>('ADMIN');
   const [name, setName] = useState('');
+  const [password, setPassword] = useState('');
   
   // Two-step selection state
   const [district, setDistrict] = useState('');
@@ -29,6 +30,13 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
   };
 
   const handleLogin = () => {
+    if (role === 'ADMIN') {
+        if (password !== 'Kezhi202615835') {
+            alert('密码错误');
+            return;
+        }
+    }
+
     if (role === 'WORKER') {
         if (!district) {
             alert('请先选择所属区域');
@@ -61,7 +69,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
         <div className="space-y-6">
           <div className="grid grid-cols-2 gap-4">
             <button
-              onClick={() => setRole('ADMIN')}
+              onClick={() => { setRole('ADMIN'); setPassword(''); }}
               className={`p-4 rounded-lg border-2 flex flex-col items-center gap-3 transition-all ${
                 role === 'ADMIN' 
                   ? 'border-blue-600 bg-blue-50 text-blue-700' 
@@ -83,6 +91,24 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
               <span className="font-semibold">执行人员/接收</span>
             </button>
           </div>
+
+          {/* Admin Password Input */}
+          {role === 'ADMIN' && (
+            <div className="space-y-4 animate-in slide-in-from-top-2">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
+                    <Lock size={16} /> 管理员密码
+                </label>
+                <input
+                    type="password"
+                    placeholder="请输入管理员密码"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+            </div>
+          )}
 
           {role === 'WORKER' && (
             <div className="space-y-4 animate-in slide-in-from-top-2">
