@@ -10,13 +10,16 @@ interface LoginScreenProps {
 }
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
-  const [role, setRole] = useState<UserRole>('ADMIN');
-  const [name, setName] = useState('');
+  // Initialize state from LocalStorage if available
+  const [role, setRole] = useState<UserRole>(() => 
+    (localStorage.getItem('last_role') as UserRole) || 'ADMIN'
+  );
+  const [name, setName] = useState(() => localStorage.getItem('last_worker_name') || '');
   const [password, setPassword] = useState('');
   
   // Two-step selection state
-  const [district, setDistrict] = useState('');
-  const [team, setTeam] = useState('');
+  const [district, setDistrict] = useState(() => localStorage.getItem('last_worker_district') || '');
+  const [team, setTeam] = useState(() => localStorage.getItem('last_worker_team') || '');
 
   // Get teams based on selected district
   const currentTeams = useMemo(() => {
@@ -51,6 +54,15 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
             return;
         }
     }
+
+    // Save choices to LocalStorage for next visit
+    localStorage.setItem('last_role', role);
+    if (role === 'WORKER') {
+        localStorage.setItem('last_worker_district', district);
+        localStorage.setItem('last_worker_team', team);
+        localStorage.setItem('last_worker_name', name.trim());
+    }
+
     onLogin({
       role,
       name: role === 'ADMIN' ? '管理员' : name.trim(),
