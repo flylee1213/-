@@ -226,14 +226,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [locationText, setLocationText] = useState<string>('');
 
-  // AI Verification State
-  const [isVerifying, setIsVerifying] = useState(false);
-  const [verificationResult, setVerificationResult] = useState<{
-    match: boolean;
-    detected: string;
-    message: string;
-  } | null>(null);
-
   // Helper: Check if a team belongs to a district
   const isTeamInDistrict = (teamName: string, district: string) => {
     return TEAM_DATA[district]?.includes(teamName);
@@ -397,26 +389,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
       };
   };
 
-  // --- AI Verification Logic (QWEN Only) - Manual Click ---
-  const verifyImageWithAI = async () => {
-    if (!photoData || !completionTarget) return;
-    setIsVerifying(true);
-    setVerificationResult(null);
-    try {
-      const result = await performAICheck(photoData, completionTarget.serialCode);
-      setVerificationResult(result);
-    } catch (error: any) {
-      console.error("AI Verification Error:", error);
-      let msg = `服务错误: ${error.message || "请重试"}`;
-      let detected = "系统错误";
-      const isQuotaError = error.message.includes("429") || error.message.includes("quota");
-      if (isQuotaError) { msg = "请求过于频繁(429)。"; detected = "配额超限"; }
-      setVerificationResult({ match: false, detected: detected, message: msg });
-    } finally {
-      setIsVerifying(false);
-    }
-  };
-
   // --- Camera Logic ---
   const startCamera = async () => {
     setCameraError(null);
@@ -452,7 +424,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
         addWatermarkToCanvas(canvas);
         const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
         setPhotoData(dataUrl);
-        setVerificationResult(null); 
         stopCamera();
       }
     }
@@ -474,7 +445,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
              addWatermarkToCanvas(canvas);
              const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
              setPhotoData(dataUrl);
-             setVerificationResult(null); 
            }
         };
         img.src = event.target?.result as string;
@@ -712,7 +682,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
     setRemark(order.completionRemark || '');
     setRemarkImages(order.remarkImages || []); // Load existing remark images
     setPhotoData(order.completionPhoto || null);
-    setVerificationResult(null); 
     setAudioData(null); 
     if (currentUser.role === 'WORKER' && (order.status === 'RECEIVED' || order.status === 'COMPLETED')) {
         fetchLocation();
@@ -727,7 +696,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
     setRemarkImages([]);
     setPhotoData(null);
     setAudioData(null);
-    setVerificationResult(null);
     setLocationText(''); 
   };
 
@@ -746,13 +714,12 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
 
     try {
         // --- 1. Automated AI Verification (Background) ---
-        let finalVerification = verificationResult; // Start with manual result if any
+        let finalVerification = null;
 
-        // If worker hasn't manually verified, run it now
-        if (currentUser.role === 'WORKER' && !finalVerification) {
+        // If worker, run AI verification automatically
+        if (currentUser.role === 'WORKER') {
              try {
                 // Background execution (awaiting it here makes it synchronous for the submission flow)
-                // This ensures we capture the result before saving.
                 finalVerification = await performAICheck(photoData, completionTarget.serialCode);
              } catch (err: any) {
                 console.error("Auto Verify Failed", err);
@@ -1003,20 +970,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
                       3. 现场拍照 (时间+地点水印) 
                       {canEditCompletion && <span className="text-red-500"> *</span>}
                   </label>
-                  {canEditCompletion && photoData && (
-                    <button 
-                      onClick={verifyImageWithAI}
-                      disabled={isVerifying}
-                      className={`text-xs flex items-center gap-1 px-3 py-1.5 rounded-full border transition-all ${
-                          !verificationResult 
-                              ? 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100' // Neutral state
-                              : 'bg-indigo-50 text-indigo-700 border-indigo-200'
-                      } disabled:opacity-50`}
-                      title="手动点击可提前核验，否则提交时将自动核验"
-                    >
-                      {isVerifying ? <span className="animate-pulse">AI 识别中...</span> : <><BrainCircuit size={14} /> {verificationResult ? '重新核对' : '智能核对 (可选)'}</>}
-                    </button>
-                  )}
                 </div>
 
                 {canEditCompletion && (
@@ -1067,16 +1020,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
                           </div>
                       )}
                     </div>
-                    {verificationResult && (
-                      <div className={`p-3 rounded-lg text-sm flex items-start gap-2 border ${verificationResult.match ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
-                        {verificationResult.match ? <CheckCircle2 size={18} className="shrink-0 mt-0.5" /> : <ScanLine size={18} className="shrink-0 mt-0.5" />}
-                        <div>
-                          <p className="font-bold">{verificationResult.match ? "匹配成功" : "匹配失败/未识别"}</p>
-                          <p>{verificationResult.message}</p>
-                          {!verificationResult.match && verificationResult.detected !== 'Error' && <p className="mt-1 text-xs opacity-80">识别结果: {verificationResult.detected}</p>}
-                        </div>
-                      </div>
-                    )}
                   </div>
                 ) : (
                     !canEditCompletion && !isCameraOpen && <div className="p-4 bg-slate-100 text-slate-500 text-center rounded-lg text-sm">无照片</div>
@@ -1122,7 +1065,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
                     disabled={!returnReason || !photoData} 
                     isLoading={isSubmitting}
                   >
-                    {isSubmitting && currentUser.role === 'WORKER' && !verificationResult ? '正在智能核验并提交...' : '提交回单'}
+                    {isSubmitting && currentUser.role === 'WORKER' ? '正在智能核验并提交...' : '提交回单'}
                   </Button>
               )}
             </div>
