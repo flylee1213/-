@@ -344,13 +344,10 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
     );
   };
 
-  // --- AI Verification Logic (QWEN Only) ---
-  const verifyImageWithAI = async () => {
-    if (!photoData || !completionTarget) return;
-    setIsVerifying(true);
-    setVerificationResult(null);
-    try {
+  // --- Shared AI Logic ---
+  const performAICheck = async (imageBlob: string, targetSerial: string): Promise<{ match: boolean; detected: string; message: string }> => {
       if (!qwenApiKey) throw new Error("未配置阿里云 API Key。请在设置中输入。");
+      
       const promptText = `
         Task: Extract all alphanumeric strings found in this image.
         Instructions:
@@ -360,8 +357,10 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
         4. Return a JSON object with an array of strings.
         Output Format: {"candidates": ["string1", "string2"]}
       `;
-      const responseText = await callQwenVL(qwenApiKey, photoData, promptText);
+      
+      const responseText = await callQwenVL(qwenApiKey, imageBlob, promptText);
       console.log(`[QWEN] OCR Response:`, responseText);
+      
       let candidates: string[] = [];
       try {
         const jsonMatch = responseText.match(/```json\n([\s\S]*?)\n```/) || responseText.match(/\{[\s\S]*\}/);
@@ -373,14 +372,14 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
         const matches = responseText.match(/[A-Z0-9\-\:]{6,}/gi);
         if (matches) candidates = Array.from(matches);
       }
+      
       if (candidates.length === 0) {
-        setVerificationResult({ match: false, detected: "未检测到文字", message: "无法从图片中识别出任何有效的字母数字串，请尝试更清晰的角度。" });
-        return;
+        return { match: false, detected: "未检测到文字", message: "无法从图片中识别出任何有效的字母数字串。" };
       }
-      const targetCode = completionTarget.serialCode;
+      
       let bestMatch = { match: false, reason: "未找到匹配项", score: -1, detected: "" };
       for (const cand of candidates) {
-        const result = strictCompare(targetCode, cand);
+        const result = strictCompare(targetSerial, cand);
         if (result.match) {
           bestMatch = { ...result, detected: cand };
           break; 
@@ -390,7 +389,22 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
           }
         }
       }
-      setVerificationResult({ match: bestMatch.match, detected: bestMatch.detected || candidates[0], message: bestMatch.match ? bestMatch.reason : `匹配失败: ${bestMatch.reason || "图片中的文字与订单不符"}` });
+      
+      return { 
+          match: bestMatch.match, 
+          detected: bestMatch.detected || candidates[0], 
+          message: bestMatch.match ? bestMatch.reason : `匹配失败: ${bestMatch.reason || "图片文字与订单不符"}` 
+      };
+  };
+
+  // --- AI Verification Logic (QWEN Only) - Manual Click ---
+  const verifyImageWithAI = async () => {
+    if (!photoData || !completionTarget) return;
+    setIsVerifying(true);
+    setVerificationResult(null);
+    try {
+      const result = await performAICheck(photoData, completionTarget.serialCode);
+      setVerificationResult(result);
     } catch (error: any) {
       console.error("AI Verification Error:", error);
       let msg = `服务错误: ${error.message || "请重试"}`;
@@ -728,16 +742,30 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
     if (!returnReason) { alert('请选择回单现象'); return; }
     if (!photoData) { alert('请拍摄现场照片'); return; }
     
-    // MANDATORY AI VERIFICATION CHECK FOR WORKERS
-    if (currentUser.role === 'WORKER' && !verificationResult) {
-        alert("必须进行 AI 核验才能提交回单。\n\n请点击照片上方的“智能核对”按钮，等待结果返回后再提交。");
-        return;
-    }
-
     setIsSubmitting(true);
 
     try {
-        // --- Image Compression Logic ---
+        // --- 1. Automated AI Verification (Background) ---
+        let finalVerification = verificationResult; // Start with manual result if any
+
+        // If worker hasn't manually verified, run it now
+        if (currentUser.role === 'WORKER' && !finalVerification) {
+             try {
+                // Background execution (awaiting it here makes it synchronous for the submission flow)
+                // This ensures we capture the result before saving.
+                finalVerification = await performAICheck(photoData, completionTarget.serialCode);
+             } catch (err: any) {
+                console.error("Auto Verify Failed", err);
+                // Fallback: don't block submission, but mark as failed or system error
+                finalVerification = { 
+                    match: false, 
+                    detected: "System Error", 
+                    message: "自动校验服务连接失败: " + (err.message || "未知错误")
+                };
+             }
+        }
+
+        // --- 2. Image Compression Logic ---
         // Compress main photo
         const compressedPhoto = await compressBase64Image(photoData);
         
@@ -748,13 +776,12 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
         // -------------------------------
 
         const currentHistory = Array.isArray(completionTarget.history) ? completionTarget.history : [];
-        const verificationNote = verificationResult ? `(AI核对: ${verificationResult.match ? '通过' : '失败'} - 识别为 ${verificationResult.detected})` : '';
+        const verificationNote = finalVerification ? `(AI核对: ${finalVerification.match ? '通过' : '失败'} - 识别为 ${finalVerification.detected})` : '';
         const isUpdate = completionTarget.status === 'COMPLETED';
         const actionDesc = isUpdate ? '修改了回单' : '完成回单';
 
         // Determine Audit Status based on verification result
-        // If user didn't run AI, verificationResult is null, so auditStatus remains undefined (or unchanged if we were to merge)
-        const newAuditStatus = verificationResult ? (verificationResult.match ? 'PASSED' : 'FAILED') : undefined;
+        const newAuditStatus = finalVerification ? (finalVerification.match ? 'PASSED' : 'FAILED') : undefined;
 
         await onUpdateOrder(completionTarget.id, {
             status: 'COMPLETED',
@@ -770,7 +797,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
         closeCompletionModal();
     } catch (e) {
         console.error("Submission error", e);
-        // Error handling is mostly done in onUpdateOrder/App.tsx, but we catch here to stop spinner
+        alert("提交失败，请检查网络或重试。");
     } finally {
         setIsSubmitting(false);
     }
@@ -974,7 +1001,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
                 <div className="flex justify-between items-center mb-2">
                   <label className="block text-sm font-semibold text-slate-700">
                       3. 现场拍照 (时间+地点水印) 
-                      {canEditCompletion && <span className="text-red-500"> * (必须 AI 核验)</span>}
+                      {canEditCompletion && <span className="text-red-500"> *</span>}
                   </label>
                   {canEditCompletion && photoData && (
                     <button 
@@ -982,11 +1009,12 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
                       disabled={isVerifying}
                       className={`text-xs flex items-center gap-1 px-3 py-1.5 rounded-full border transition-all ${
                           !verificationResult 
-                              ? 'bg-indigo-100 text-indigo-700 border-indigo-300 font-bold shadow-sm animate-pulse' 
-                              : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
+                              ? 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100' // Neutral state
+                              : 'bg-indigo-50 text-indigo-700 border-indigo-200'
                       } disabled:opacity-50`}
+                      title="手动点击可提前核验，否则提交时将自动核验"
                     >
-                      {isVerifying ? <span className="animate-pulse">AI 识别中...</span> : <><BrainCircuit size={14} /> {verificationResult ? '重新核对' : '智能核对 (必须)'}</>}
+                      {isVerifying ? <span className="animate-pulse">AI 识别中...</span> : <><BrainCircuit size={14} /> {verificationResult ? '重新核对' : '智能核对 (可选)'}</>}
                     </button>
                   )}
                 </div>
@@ -1091,10 +1119,10 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
               {canEditCompletion && (
                   <Button 
                     onClick={submitCompletion} 
-                    disabled={!returnReason || !photoData || (currentUser.role === 'WORKER' && !verificationResult)} 
+                    disabled={!returnReason || !photoData} 
                     isLoading={isSubmitting}
                   >
-                    {currentUser.role === 'WORKER' && !verificationResult && photoData ? '请先 AI 核验' : '提交回单'}
+                    {isSubmitting && currentUser.role === 'WORKER' && !verificationResult ? '正在智能核验并提交...' : '提交回单'}
                   </Button>
               )}
             </div>
