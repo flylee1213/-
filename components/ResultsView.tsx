@@ -750,11 +750,15 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
         // Determine Audit Status based on verification result
         const newAuditStatus = finalVerification ? (finalVerification.match ? 'PASSED' : 'FAILED') : undefined;
 
+        // NEW LOGIC: Clean up old verification notes to avoid stacking
+        const remarkCleaned = remark.replace(/\(AI核对:.*?\)/g, '').trim();
+        const finalRemark = remarkCleaned + (remarkCleaned && verificationNote ? ' ' : '') + verificationNote;
+
         await onUpdateOrder(completionTarget.id, {
             status: 'COMPLETED',
             completedAt: new Date().toISOString(),
             returnReason: returnReason as ReturnReason,
-            completionRemark: remark + (remark && verificationNote ? ' ' : '') + verificationNote,
+            completionRemark: finalRemark,
             remarkImages: compressedRemarkImages, 
             completionPhoto: compressedPhoto, 
             completionAudio: audioData?.data || undefined,
