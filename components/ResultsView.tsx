@@ -661,7 +661,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
       zip.file("订单列表.xlsx", excelBuffer);
 
       // Generate Zip Blob
-      const zipBlob = await zip.generateAsync({ type: "blob" });
+      const zipBlob = await zip.generateAsync({ type: "blob" }) as Blob;
       
       const url = window.URL.createObjectURL(zipBlob);
       const anchor = document.createElement('a');
@@ -727,6 +727,12 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
     if (currentUser.role === 'ADMIN') { closeCompletionModal(); return; }
     if (!returnReason) { alert('请选择回单现象'); return; }
     if (!photoData) { alert('请拍摄现场照片'); return; }
+    
+    // MANDATORY AI VERIFICATION CHECK FOR WORKERS
+    if (currentUser.role === 'WORKER' && !verificationResult) {
+        alert("必须进行 AI 核验才能提交回单。\n\n请点击照片上方的“智能核对”按钮，等待结果返回后再提交。");
+        return;
+    }
 
     setIsSubmitting(true);
 
@@ -966,14 +972,21 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
 
               <div>
                 <div className="flex justify-between items-center mb-2">
-                  <label className="block text-sm font-semibold text-slate-700">3. 现场拍照 (时间+地点水印) {canEditCompletion && <span className="text-red-500">*</span>}</label>
+                  <label className="block text-sm font-semibold text-slate-700">
+                      3. 现场拍照 (时间+地点水印) 
+                      {canEditCompletion && <span className="text-red-500"> * (必须 AI 核验)</span>}
+                  </label>
                   {canEditCompletion && photoData && (
                     <button 
                       onClick={verifyImageWithAI}
                       disabled={isVerifying}
-                      className="text-xs flex items-center gap-1 bg-indigo-50 text-indigo-700 px-2 py-1 rounded-full border border-indigo-200 hover:bg-indigo-100 transition-colors disabled:opacity-50"
+                      className={`text-xs flex items-center gap-1 px-3 py-1.5 rounded-full border transition-all ${
+                          !verificationResult 
+                              ? 'bg-indigo-100 text-indigo-700 border-indigo-300 font-bold shadow-sm animate-pulse' 
+                              : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
+                      } disabled:opacity-50`}
                     >
-                      {isVerifying ? <span className="animate-pulse">AI 识别中...</span> : <><BrainCircuit size={14} /> 智能核对 (通义千问)</>}
+                      {isVerifying ? <span className="animate-pulse">AI 识别中...</span> : <><BrainCircuit size={14} /> {verificationResult ? '重新核对' : '智能核对 (必须)'}</>}
                     </button>
                   )}
                 </div>
@@ -1075,7 +1088,15 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
 
             <div className="p-5 border-t border-slate-100 flex gap-3 justify-end bg-slate-50 rounded-b-xl">
               <Button variant="outline" onClick={closeCompletionModal}>{canEditCompletion ? '取消' : '关闭'}</Button>
-              {canEditCompletion && <Button onClick={submitCompletion} disabled={!returnReason || !photoData} isLoading={isSubmitting}>提交回单</Button>}
+              {canEditCompletion && (
+                  <Button 
+                    onClick={submitCompletion} 
+                    disabled={!returnReason || !photoData || (currentUser.role === 'WORKER' && !verificationResult)} 
+                    isLoading={isSubmitting}
+                  >
+                    {currentUser.role === 'WORKER' && !verificationResult && photoData ? '请先 AI 核验' : '提交回单'}
+                  </Button>
+              )}
             </div>
           </div>
         </div>
