@@ -8,6 +8,8 @@ export interface User {
 
 export type ParsingStep = 'LOGIN' | 'UPLOAD' | 'MAPPING' | 'RESULTS';
 
+export type RawRow = any[];
+
 export interface ColumnMapping {
   taskName: string;
   businessNo: string;

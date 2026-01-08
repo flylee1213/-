@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useRef } from 'react';
-import { Order, User, OrderStatus, ReturnReason, AuditStatus } from '../types';
+import { Order, User, OrderStatus, ReturnReason } from '../types';
 import { Button } from './Button';
-import { Download, Search, RotateCcw, CheckCircle2, UserCircle, ArrowRightLeft, CheckSquare, Camera, Mic, X, Image as ImageIcon, Aperture, ScanLine, BrainCircuit, Filter, Settings, Server, MapPin, Clock, Edit2, CalendarClock, Map, Users, Plus, Trash2, RefreshCw, ShieldCheck, ShieldAlert, Check, HelpCircle } from 'lucide-react';
+import { Download, Search, RotateCcw, CheckCircle2, UserCircle, ArrowRightLeft, CheckSquare, Camera, Mic, X, Image as ImageIcon, Aperture, ScanLine, BrainCircuit, Filter, Settings, Server, MapPin, Clock, Edit2, CalendarClock, Map, Users, Plus, Trash2, RefreshCw, ShieldCheck, ShieldAlert, Check } from 'lucide-react';
 import ExcelJS from 'exceljs';
 import JSZip from 'jszip';
 import { TEAM_DATA, DISTRICTS } from '../data/teamData';
@@ -670,7 +670,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
           userName: order.userName,
           serialCode: order.serialCode,
           status: getStatusLabel(order.status),
-          auditStatus: order.auditStatus === 'PASSED' ? '审核通过' : (order.auditStatus === 'FAILED' ? '审核未通过' : (order.auditStatus === 'PENDING' ? '待审核' : '')),
+          auditStatus: order.auditStatus === 'PASSED' ? '审核通过' : (order.auditStatus === 'FAILED' ? '审核未通过' : ''),
           deadline: order.deadline ? new Date(order.deadline).toLocaleString() : '',
           returnReason: order.returnReason || '',
           completionRemark: order.completionRemark || '',
@@ -816,34 +816,27 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
     setIsSubmitting(true);
 
     try {
+        // --- 1. Automated AI Verification (Background) ---
         let finalVerification = null;
-        let newAuditStatus: AuditStatus | undefined = undefined;
 
         // If worker AND photo taken, run strict AI verification
-        if (currentUser.role === 'WORKER') {
-             if (hasPhoto) {
-                 try {
-                    // Background execution (awaiting it here makes it synchronous for the submission flow)
-                    finalVerification = await performAICheck(photoData, completionTarget.serialCode);
-                    
-                    // STRICT BLOCKING: If verification fails, prevent submission
-                    if (!finalVerification.match) {
-                         alert(`回单失败需重新拍照！\n\nAI核对未通过：${finalVerification.message}\n识别结果：${finalVerification.detected}`);
-                         setIsSubmitting(false);
-                         return;
-                    }
-                    newAuditStatus = 'PASSED';
-                 } catch (err: any) {
-                    console.error("Auto Verify Failed", err);
-                    // Fail safe: If verification service is down, block submission because we can't verify
-                    alert("智能核验服务连接失败，无法验证照片。\n请检查网络后重试。");
-                    setIsSubmitting(false);
-                    return;
-                 }
-             } else {
-                 // No photo, has attachments
-                 newAuditStatus = 'PENDING';
-                 finalVerification = { match: true, detected: '无', message: '无照片，已转人工审核' }; // Placeholder for history
+        if (currentUser.role === 'WORKER' && hasPhoto) {
+             try {
+                // Background execution (awaiting it here makes it synchronous for the submission flow)
+                finalVerification = await performAICheck(photoData, completionTarget.serialCode);
+                
+                // STRICT BLOCKING: If verification fails, prevent submission
+                if (!finalVerification.match) {
+                     alert(`回单失败需重新拍照！\n\nAI核对未通过：${finalVerification.message}\n识别结果：${finalVerification.detected}`);
+                     setIsSubmitting(false);
+                     return;
+                }
+             } catch (err: any) {
+                console.error("Auto Verify Failed", err);
+                // Fail safe: If verification service is down, block submission because we can't verify
+                alert("智能核验服务连接失败，无法验证照片。\n请检查网络后重试。");
+                setIsSubmitting(false);
+                return;
              }
         }
 
@@ -858,15 +851,17 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
         // -------------------------------
 
         const currentHistory = Array.isArray(completionTarget.history) ? completionTarget.history : [];
-        const verificationNote = finalVerification && hasPhoto 
-            ? `(AI核对: ${finalVerification.match ? '通过' : '失败'} - 识别为 ${finalVerification.detected})` 
-            : (newAuditStatus === 'PENDING' ? '(无照片，待审核)' : '');
-            
+        const verificationNote = finalVerification ? `(AI核对: ${finalVerification.match ? '通过' : '失败'} - 识别为 ${finalVerification.detected})` : '';
         const isUpdate = completionTarget.status === 'COMPLETED';
         const actionDesc = isUpdate ? '修改了回单' : '完成回单';
 
+        // Determine Audit Status based on verification result (if applicable)
+        // If no photo, auditStatus is technically undefined or maybe passed if we consider attachments valid. 
+        // Keeping it undefined if no photo for now, or could map to something else.
+        const newAuditStatus = finalVerification ? (finalVerification.match ? 'PASSED' : 'FAILED') : undefined;
+
         // NEW LOGIC: Clean up old verification notes to avoid stacking
-        const remarkCleaned = remark.replace(/\(AI核对:.*?\)/g, '').replace(/\(无照片，待审核\)/g, '').trim();
+        const remarkCleaned = remark.replace(/\(AI核对:.*?\)/g, '').trim();
         const finalRemark = remarkCleaned + (remarkCleaned && verificationNote ? ' ' : '') + verificationNote;
 
         await onUpdateOrder(completionTarget.id, {
@@ -1285,7 +1280,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
                     disabled={!returnReason || (!photoData && remarkImages.length === 0)} 
                     isLoading={isSubmitting}
                   >
-                    {isSubmitting && currentUser.role === 'WORKER' && hasPhoto && !verificationResult ? '正在智能核验并提交...' : '提交回单'}
+                    {isSubmitting && currentUser.role === 'WORKER' && !verificationResult ? '正在智能核验并提交...' : '提交回单'}
                   </Button>
               )}
             </div>
@@ -1509,11 +1504,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
                           {order.auditStatus === 'FAILED' && (
                               <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded bg-rose-100 text-rose-700 border border-rose-200">
                                   <ShieldAlert size={10} /> 审核未通过
-                              </span>
-                          )}
-                          {order.auditStatus === 'PENDING' && (
-                              <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded bg-amber-100 text-amber-700 border border-amber-200">
-                                  <Clock size={10} /> 待审核
                               </span>
                           )}
                           <span className={`text-xs font-semibold px-2 py-0.5 rounded ${getStatusColor(order.status)}`}>
