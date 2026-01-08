@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef } from 'react';
-import { Order, User, OrderStatus, ReturnReason } from '../types';
+import { Order, User, OrderStatus, ReturnReason, AuditStatus } from '../types';
 import { Button } from './Button';
 import { Download, Search, RotateCcw, CheckCircle2, UserCircle, ArrowRightLeft, CheckSquare, Camera, Mic, X, Image as ImageIcon, Aperture, ScanLine, BrainCircuit, Filter, Settings, Server, MapPin, Clock, Edit2, CalendarClock, Map, Users, Plus, Trash2, RefreshCw, ShieldCheck, ShieldAlert, Check } from 'lucide-react';
 import ExcelJS from 'exceljs';
@@ -670,7 +670,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
           userName: order.userName,
           serialCode: order.serialCode,
           status: getStatusLabel(order.status),
-          auditStatus: order.auditStatus === 'PASSED' ? '审核通过' : (order.auditStatus === 'FAILED' ? '审核未通过' : ''),
+          auditStatus: order.auditStatus === 'PASSED' ? '审核通过' : (order.auditStatus === 'FAILED' ? '审核未通过' : (order.auditStatus === 'PENDING' ? '待审核' : '')),
           deadline: order.deadline ? new Date(order.deadline).toLocaleString() : '',
           returnReason: order.returnReason || '',
           completionRemark: order.completionRemark || '',
@@ -687,18 +687,27 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
         if (order.remarkImages && order.remarkImages.length > 0) {
            const base64 = order.remarkImages[0];
            if (base64) {
-               const imageId = workbook.addImage({ base64: base64, extension: 'jpeg' });
+               // Strip prefix if present (data:image/jpeg;base64,)
+               const base64Data = base64.replace(/^data:image\/[a-z]+;base64,/, "");
+               const imageId = workbook.addImage({ base64: base64Data, extension: 'jpeg' });
                sheet.addImage(imageId, { 
                    tl: { col: 10, row: row.number - 1 }, // Adjusted index due to new column
-                   br: { col: 11, row: row.number } 
+                   br: { col: 11, row: row.number },
+                   editAs: 'oneCell' // Force embed in cell
                } as any);
                rowHeight = 150;
            }
         }
         // Completion Photo
         if (order.completionPhoto) {
-          const imageId = workbook.addImage({ base64: order.completionPhoto, extension: 'jpeg' });
-          sheet.addImage(imageId, { tl: { col: 11, row: row.number - 1 }, br: { col: 12, row: row.number } } as any);
+          // Strip prefix
+          const base64Data = order.completionPhoto.replace(/^data:image\/[a-z]+;base64,/, "");
+          const imageId = workbook.addImage({ base64: base64Data, extension: 'jpeg' });
+          sheet.addImage(imageId, { 
+              tl: { col: 11, row: row.number - 1 }, 
+              br: { col: 12, row: row.number },
+              editAs: 'oneCell' // Force embed in cell
+          } as any);
           rowHeight = 150;
         }
 
@@ -816,27 +825,34 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
     setIsSubmitting(true);
 
     try {
-        // --- 1. Automated AI Verification (Background) ---
         let finalVerification = null;
+        let newAuditStatus: AuditStatus | undefined = undefined;
 
         // If worker AND photo taken, run strict AI verification
-        if (currentUser.role === 'WORKER' && hasPhoto) {
-             try {
-                // Background execution (awaiting it here makes it synchronous for the submission flow)
-                finalVerification = await performAICheck(photoData, completionTarget.serialCode);
-                
-                // STRICT BLOCKING: If verification fails, prevent submission
-                if (!finalVerification.match) {
-                     alert(`回单失败需重新拍照！\n\nAI核对未通过：${finalVerification.message}\n识别结果：${finalVerification.detected}`);
-                     setIsSubmitting(false);
-                     return;
-                }
-             } catch (err: any) {
-                console.error("Auto Verify Failed", err);
-                // Fail safe: If verification service is down, block submission because we can't verify
-                alert("智能核验服务连接失败，无法验证照片。\n请检查网络后重试。");
-                setIsSubmitting(false);
-                return;
+        if (currentUser.role === 'WORKER') {
+             if (hasPhoto) {
+                 try {
+                    // Background execution (awaiting it here makes it synchronous for the submission flow)
+                    finalVerification = await performAICheck(photoData, completionTarget.serialCode);
+                    
+                    // STRICT BLOCKING: If verification fails, prevent submission
+                    if (!finalVerification.match) {
+                         alert(`回单失败需重新拍照！\n\nAI核对未通过：${finalVerification.message}\n识别结果：${finalVerification.detected}`);
+                         setIsSubmitting(false);
+                         return;
+                    }
+                    newAuditStatus = 'PASSED';
+                 } catch (err: any) {
+                    console.error("Auto Verify Failed", err);
+                    // Fail safe: If verification service is down, block submission because we can't verify
+                    alert("智能核验服务连接失败，无法验证照片。\n请检查网络后重试。");
+                    setIsSubmitting(false);
+                    return;
+                 }
+             } else {
+                 // No photo, has attachments
+                 newAuditStatus = 'PENDING';
+                 finalVerification = { match: true, detected: '无', message: '无照片，已转人工审核' }; // Placeholder for history
              }
         }
 
@@ -851,17 +867,15 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
         // -------------------------------
 
         const currentHistory = Array.isArray(completionTarget.history) ? completionTarget.history : [];
-        const verificationNote = finalVerification ? `(AI核对: ${finalVerification.match ? '通过' : '失败'} - 识别为 ${finalVerification.detected})` : '';
+        const verificationNote = finalVerification && hasPhoto 
+            ? `(AI核对: ${finalVerification.match ? '通过' : '失败'} - 识别为 ${finalVerification.detected})` 
+            : (newAuditStatus === 'PENDING' ? '(无照片，待审核)' : '');
+            
         const isUpdate = completionTarget.status === 'COMPLETED';
         const actionDesc = isUpdate ? '修改了回单' : '完成回单';
 
-        // Determine Audit Status based on verification result (if applicable)
-        // If no photo, auditStatus is technically undefined or maybe passed if we consider attachments valid. 
-        // Keeping it undefined if no photo for now, or could map to something else.
-        const newAuditStatus = finalVerification ? (finalVerification.match ? 'PASSED' : 'FAILED') : undefined;
-
         // NEW LOGIC: Clean up old verification notes to avoid stacking
-        const remarkCleaned = remark.replace(/\(AI核对:.*?\)/g, '').trim();
+        const remarkCleaned = remark.replace(/\(AI核对:.*?\)/g, '').replace(/\(无照片，待审核\)/g, '').trim();
         const finalRemark = remarkCleaned + (remarkCleaned && verificationNote ? ' ' : '') + verificationNote;
 
         await onUpdateOrder(completionTarget.id, {
@@ -1280,7 +1294,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
                     disabled={!returnReason || (!photoData && remarkImages.length === 0)} 
                     isLoading={isSubmitting}
                   >
-                    {isSubmitting && currentUser.role === 'WORKER' && !verificationResult ? '正在智能核验并提交...' : '提交回单'}
+                    {isSubmitting && currentUser.role === 'WORKER' && !!photoData && !verificationResult ? '正在智能核验并提交...' : '提交回单'}
                   </Button>
               )}
             </div>
@@ -1506,6 +1520,11 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
                                   <ShieldAlert size={10} /> 审核未通过
                               </span>
                           )}
+                          {order.auditStatus === 'PENDING' && (
+                              <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded bg-amber-100 text-amber-700 border border-amber-200">
+                                  <Clock size={10} /> 待审核
+                              </span>
+                          )}
                           <span className={`text-xs font-semibold px-2 py-0.5 rounded ${getStatusColor(order.status)}`}>
                             {getStatusLabel(order.status)}
                           </span>
@@ -1553,7 +1572,11 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
                     <div className="pt-2">
                       <div className="bg-slate-50 p-2 rounded text-center border border-slate-100 mb-3">
                         <span className="text-xs text-slate-500 block uppercase tracking-wider mb-1">串码</span>
-                        <span className="font-mono text-sm font-bold text-slate-700 break-all">{order.serialCode}</span>
+                        <span className="font-mono text-sm font-bold text-slate-700 break-all">
+                          {currentUser.role === 'WORKER' && order.serialCode && order.serialCode.length >= 2 
+                            ? '**' + order.serialCode.slice(2) 
+                            : order.serialCode}
+                        </span>
                       </div>
 
                       {order.status === 'COMPLETED' && (

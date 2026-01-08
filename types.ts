@@ -3,6 +3,8 @@ export type OrderStatus = 'PENDING' | 'DISPATCHED' | 'RECEIVED' | 'COMPLETED';
 
 export type ReturnReason = '家中无人无法上门' | '终端在现场使用' | '目标终端无法找到' | '其他';
 
+export type AuditStatus = 'PASSED' | 'FAILED' | 'PENDING';
+
 export interface Order {
   id: string;
   taskName: string;
@@ -27,7 +29,7 @@ export interface Order {
   completionAudio?: string; // Base64 string or filename
   
   // AI Verification Status
-  auditStatus?: 'PASSED' | 'FAILED'; // New: Result of the AI check
+  auditStatus?: AuditStatus; // Result of the AI check
 }
 
 export interface RawRow {
