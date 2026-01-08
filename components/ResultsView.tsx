@@ -687,27 +687,18 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
         if (order.remarkImages && order.remarkImages.length > 0) {
            const base64 = order.remarkImages[0];
            if (base64) {
-               // Strip prefix if present (data:image/jpeg;base64,)
-               const base64Data = base64.replace(/^data:image\/[a-z]+;base64,/, "");
-               const imageId = workbook.addImage({ base64: base64Data, extension: 'jpeg' });
+               const imageId = workbook.addImage({ base64: base64, extension: 'jpeg' });
                sheet.addImage(imageId, { 
                    tl: { col: 10, row: row.number - 1 }, // Adjusted index due to new column
-                   br: { col: 11, row: row.number },
-                   editAs: 'oneCell' // Force embed in cell
+                   br: { col: 11, row: row.number } 
                } as any);
                rowHeight = 150;
            }
         }
         // Completion Photo
         if (order.completionPhoto) {
-          // Strip prefix
-          const base64Data = order.completionPhoto.replace(/^data:image\/[a-z]+;base64,/, "");
-          const imageId = workbook.addImage({ base64: base64Data, extension: 'jpeg' });
-          sheet.addImage(imageId, { 
-              tl: { col: 11, row: row.number - 1 }, 
-              br: { col: 12, row: row.number },
-              editAs: 'oneCell' // Force embed in cell
-          } as any);
+          const imageId = workbook.addImage({ base64: order.completionPhoto, extension: 'jpeg' });
+          sheet.addImage(imageId, { tl: { col: 11, row: row.number - 1 }, br: { col: 12, row: row.number } } as any);
           rowHeight = 150;
         }
 
