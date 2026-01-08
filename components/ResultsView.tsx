@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { Order, User, OrderStatus, ReturnReason } from '../types';
 import { Button } from './Button';
-import { Download, Search, RotateCcw, CheckCircle2, UserCircle, ArrowRightLeft, CheckSquare, Camera, Mic, X, Image as ImageIcon, Aperture, ScanLine, BrainCircuit, Filter, Settings, Server, MapPin, Clock, Edit2, CalendarClock, Map, Users, Plus, Trash2, RefreshCw, ShieldCheck, ShieldAlert } from 'lucide-react';
+import { Download, Search, RotateCcw, CheckCircle2, UserCircle, ArrowRightLeft, CheckSquare, Camera, Mic, X, Image as ImageIcon, Aperture, ScanLine, BrainCircuit, Filter, Settings, Server, MapPin, Clock, Edit2, CalendarClock, Map, Users, Plus, Trash2, RefreshCw, ShieldCheck, ShieldAlert, Check } from 'lucide-react';
 import ExcelJS from 'exceljs';
 import JSZip from 'jszip';
 import { TEAM_DATA, DISTRICTS } from '../data/teamData';
@@ -194,6 +194,9 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
   const [isExporting, setIsExporting] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false); // Submission loading state
+  
+  // Batch Selection State
+  const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set());
 
   // Settings State
   const [showSettings, setShowSettings] = useState(false);
@@ -205,6 +208,12 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
   // Transfer Modal State
   const [transferTarget, setTransferTarget] = useState<{orderId: string, currentName: string} | null>(null);
   const [newOwnerName, setNewOwnerName] = useState('');
+  
+  // Batch Transfer Modal State
+  const [showBatchTransfer, setShowBatchTransfer] = useState(false);
+  const [batchDistrict, setBatchDistrict] = useState('');
+  const [batchTeam, setBatchTeam] = useState('');
+  const [batchWorkerName, setBatchWorkerName] = useState('');
 
   // Deadline Edit Modal State
   const [deadlineEditTarget, setDeadlineEditTarget] = useState<{ id: string, oldDeadline: string } | null>(null);
@@ -225,116 +234,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
   const nativeInputRef = useRef<HTMLInputElement>(null); // Ref for native file input
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [locationText, setLocationText] = useState<string>('');
-
-  // Helper: Check if a team belongs to a district
-  const isTeamInDistrict = (teamName: string, district: string) => {
-    return TEAM_DATA[district]?.includes(teamName);
-  };
-
-  // Extract unique teams for dropdown (Fallback for ALL districts)
-  const uniqueTeams = useMemo(() => {
-    const teams = new Set(orders.map(o => o.team).filter(Boolean));
-    return Array.from(teams).sort();
-  }, [orders]);
-
-  // Available Teams based on District selection
-  const availableTeamsForFilter = useMemo(() => {
-    if (districtFilter === 'ALL') {
-      return uniqueTeams;
-    }
-    return TEAM_DATA[districtFilter] || [];
-  }, [districtFilter, uniqueTeams]);
-
-  // Handle District Change
-  const handleDistrictChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    setDistrictFilter(e.target.value);
-    setTeamFilter('ALL'); // Reset team filter when district changes
-  };
-
-  const filteredOrders = useMemo(() => {
-    const lowerTerm = searchTerm.toLowerCase().trim();
-    
-    let visibleOrders = orders;
-    
-    // WORKER FILTERING LOGIC
-    if (currentUser.role === 'WORKER') {
-      visibleOrders = orders.filter(o => {
-          // 1. Must be assigned to current user's NAME
-          const isNameMatch = o.userName === currentUser.name;
-          // 2. Must be assigned to current user's TEAM (if team is set)
-          const isTeamMatch = currentUser.team ? o.team === currentUser.team : true;
-
-          if (!isNameMatch || !isTeamMatch) return false;
-          
-          return true;
-      });
-    }
-
-    const results = visibleOrders.filter(order => {
-      const matchesSearch = !lowerTerm || Object.values(order).some(val => 
-        String(val).toLowerCase().includes(lowerTerm)
-      );
-      const matchesStatus = statusFilter === 'ALL' || order.status === statusFilter;
-      const matchesDistrict = districtFilter === 'ALL' || (order.team && isTeamInDistrict(order.team, districtFilter));
-      const matchesTeam = teamFilter === 'ALL' || order.team === teamFilter;
-      
-      return matchesSearch && matchesStatus && matchesDistrict && matchesTeam;
-    });
-
-    return results.sort((a, b) => {
-      const aTask = a.taskName.toLowerCase();
-      const bTask = b.taskName.toLowerCase();
-      if (aTask === lowerTerm && bTask !== lowerTerm) return -1;
-      if (bTask === lowerTerm && aTask !== lowerTerm) return 1;
-      return 0;
-    });
-  }, [orders, searchTerm, currentUser, statusFilter, districtFilter, teamFilter]);
-
-  // --- Settings Handler ---
-  const handleSaveSettings = () => {
-    localStorage.setItem('qwen_api_key', qwenApiKey);
-    localStorage.setItem('amap_api_key', amapKey);
-    setShowSettings(false);
-    alert('系统配置已保存。');
-  };
-
-  // --- Location Handler ---
-  const fetchLocation = () => {
-    if (!navigator.geolocation) {
-      setLocationText('不支持定位');
-      return;
-    }
-
-    setLocationText('正在获取地址...');
-
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const { latitude, longitude } = position.coords;
-        const [gcjLat, gcjLon] = wgs84ToGcj02(latitude, longitude);
-        if (amapKey) {
-            try {
-                const res = await fetch(`https://restapi.amap.com/v3/geocode/regeo?key=${amapKey}&location=${gcjLon},${gcjLat}&extensions=base`);
-                const data = await res.json();
-                if (data.status === '1' && data.regeocode && data.regeocode.formatted_address) {
-                    setLocationText(data.regeocode.formatted_address);
-                } else {
-                    setLocationText(`位置: ${latitude.toFixed(4)}, ${longitude.toFixed(4)}`);
-                }
-            } catch (error) {
-                console.error("Amap API Error:", error);
-                setLocationText(`位置: ${latitude.toFixed(4)}, ${longitude.toFixed(4)}`);
-            }
-        } else {
-             setLocationText(`位置: ${latitude.toFixed(4)}, ${longitude.toFixed(4)}`);
-        }
-      },
-      (error) => {
-        console.error("Geolocation error:", error);
-        setLocationText('无法获取定位');
-      },
-      { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
-    );
-  };
 
   // --- Shared AI Logic ---
   const performAICheck = async (imageBlob: string, targetSerial: string): Promise<{ match: boolean; detected: string; message: string }> => {
@@ -387,6 +286,203 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
           detected: bestMatch.detected || candidates[0], 
           message: bestMatch.match ? bestMatch.reason : `匹配失败: ${bestMatch.reason || "图片文字与订单不符"}` 
       };
+  };
+
+  // --- Fix for missing verification logic ---
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [verificationResult, setVerificationResult] = useState<{ match: boolean; detected: string; message: string } | null>(null);
+
+  const verifyImageWithAI = async () => {
+    if (!completionTarget || !photoData) return;
+    setIsVerifying(true);
+    setVerificationResult(null);
+    try {
+        // Use completionTarget.serialCode as target
+        const res = await performAICheck(photoData, completionTarget.serialCode);
+        setVerificationResult(res);
+    } catch (e: any) {
+        console.error("Manual Verify Error", e);
+        setVerificationResult({ match: false, detected: 'Error', message: e.message || '核验出错' });
+    } finally {
+        setIsVerifying(false);
+    }
+  };
+
+  // Helper: Check if a team belongs to a district
+  const isTeamInDistrict = (teamName: string, district: string) => {
+    return TEAM_DATA[district]?.includes(teamName);
+  };
+
+  // Extract unique teams for dropdown (Fallback for ALL districts)
+  const uniqueTeams = useMemo(() => {
+    const teams = new Set(orders.map(o => o.team).filter(Boolean));
+    return Array.from(teams).sort();
+  }, [orders]);
+
+  // Available Teams based on District selection
+  const availableTeamsForFilter = useMemo(() => {
+    if (districtFilter === 'ALL') {
+      return uniqueTeams;
+    }
+    return TEAM_DATA[districtFilter] || [];
+  }, [districtFilter, uniqueTeams]);
+  
+  // Batch Transfer Teams
+  const availableTeamsForBatch = useMemo(() => {
+    if (!batchDistrict) return [];
+    return TEAM_DATA[batchDistrict] || [];
+  }, [batchDistrict]);
+
+  // Handle District Change
+  const handleDistrictChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    setDistrictFilter(e.target.value);
+    setTeamFilter('ALL'); // Reset team filter when district changes
+  };
+
+  const filteredOrders = useMemo(() => {
+    const lowerTerm = searchTerm.toLowerCase().trim();
+    
+    let visibleOrders = orders;
+    
+    // WORKER FILTERING LOGIC
+    if (currentUser.role === 'WORKER') {
+      visibleOrders = orders.filter(o => {
+          // 1. Must be assigned to current user's NAME
+          const isNameMatch = o.userName === currentUser.name;
+          // 2. Must be assigned to current user's TEAM (if team is set)
+          const isTeamMatch = currentUser.team ? o.team === currentUser.team : true;
+
+          if (!isNameMatch || !isTeamMatch) return false;
+          
+          return true;
+      });
+    }
+
+    const results = visibleOrders.filter(order => {
+      const matchesSearch = !lowerTerm || Object.values(order).some(val => 
+        String(val).toLowerCase().includes(lowerTerm)
+      );
+      const matchesStatus = statusFilter === 'ALL' || order.status === statusFilter;
+      const matchesDistrict = districtFilter === 'ALL' || (order.team && isTeamInDistrict(order.team, districtFilter));
+      const matchesTeam = teamFilter === 'ALL' || order.team === teamFilter;
+      
+      return matchesSearch && matchesStatus && matchesDistrict && matchesTeam;
+    });
+
+    return results.sort((a, b) => {
+      const aTask = a.taskName.toLowerCase();
+      const bTask = b.taskName.toLowerCase();
+      if (aTask === lowerTerm && bTask !== lowerTerm) return -1;
+      if (bTask === lowerTerm && aTask !== lowerTerm) return 1;
+      return 0;
+    });
+  }, [orders, searchTerm, currentUser, statusFilter, districtFilter, teamFilter]);
+
+  // --- Batch Selection Logic ---
+  const toggleSelection = (orderId: string) => {
+    setSelectedOrderIds(prev => {
+        const next = new Set(prev);
+        if (next.has(orderId)) {
+            next.delete(orderId);
+        } else {
+            next.add(orderId);
+        }
+        return next;
+    });
+  };
+
+  const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
+      if (e.target.checked) {
+          const allIds = filteredOrders.map(o => o.id);
+          setSelectedOrderIds(new Set(allIds));
+      } else {
+          setSelectedOrderIds(new Set());
+      }
+  };
+
+  // --- Batch Transfer Logic ---
+  const openBatchTransferModal = () => {
+      setBatchDistrict('');
+      setBatchTeam('');
+      setBatchWorkerName('');
+      setShowBatchTransfer(true);
+  };
+
+  const confirmBatchTransfer = async () => {
+    if (!batchTeam) return;
+    
+    setIsRefreshing(true); // Re-use loading state
+    
+    try {
+        const updates = Array.from(selectedOrderIds).map(orderId => {
+            const targetOrder = orders.find(o => o.id === orderId);
+            const currentHistory = targetOrder && Array.isArray(targetOrder.history) ? targetOrder.history : [];
+            const newName = batchWorkerName.trim() || targetOrder?.userName || '';
+            const desc = `批量转派至 [${batchTeam}] ${newName ? `(${newName})` : ''}`;
+            
+            return onUpdateOrder(orderId, {
+                team: batchTeam,
+                userName: newName,
+                history: [...currentHistory, `${currentUser.name} ${desc} 于 ${new Date().toLocaleString()}`]
+            });
+        });
+
+        await Promise.all(updates);
+        setSelectedOrderIds(new Set());
+        setShowBatchTransfer(false);
+        alert(`成功转派 ${updates.length} 个订单。`);
+    } catch (e) {
+        console.error("Batch transfer error", e);
+        alert("批量转派过程中发生错误，部分订单可能未更新。");
+    } finally {
+        setIsRefreshing(false);
+    }
+  };
+
+  // --- Settings Handler ---
+  const handleSaveSettings = () => {
+    localStorage.setItem('qwen_api_key', qwenApiKey);
+    localStorage.setItem('amap_api_key', amapKey);
+    setShowSettings(false);
+    alert('系统配置已保存。');
+  };
+
+  // --- Location Handler ---
+  const fetchLocation = () => {
+    if (!navigator.geolocation) {
+      setLocationText('不支持定位');
+      return;
+    }
+
+    setLocationText('正在获取地址...');
+
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const { latitude, longitude } = position.coords;
+        const [gcjLat, gcjLon] = wgs84ToGcj02(latitude, longitude);
+        if (amapKey) {
+            try {
+                const res = await fetch(`https://restapi.amap.com/v3/geocode/regeo?key=${amapKey}&location=${gcjLon},${gcjLat}&extensions=base`);
+                const data = await res.json();
+                if (data.status === '1' && data.regeocode && data.regeocode.formatted_address) {
+                    setLocationText(data.regeocode.formatted_address);
+                } else {
+                    setLocationText(`位置: ${latitude.toFixed(4)}, ${longitude.toFixed(4)}`);
+                }
+            } catch (error) {
+                console.error("Amap API Error:", error);
+                setLocationText(`位置: ${latitude.toFixed(4)}, ${longitude.toFixed(4)}`);
+            }
+        } else {
+             setLocationText(`位置: ${latitude.toFixed(4)}, ${longitude.toFixed(4)}`);
+        }
+      },
+      (error) => {
+        console.error("Geolocation error:", error);
+        setLocationText('无法获取定位');
+      },
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+    );
   };
 
   // --- Camera Logic ---
@@ -645,7 +741,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
       zip.file("订单列表.xlsx", excelBuffer);
 
       // Generate Zip Blob
-      const zipBlob = await zip.generateAsync({ type: "blob" }) as Blob;
+      const zipBlob = (await zip.generateAsync({ type: "blob" })) as unknown as Blob;
       
       const url = window.URL.createObjectURL(zipBlob);
       const anchor = document.createElement('a');
@@ -708,7 +804,14 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
     }
     if (currentUser.role === 'ADMIN') { closeCompletionModal(); return; }
     if (!returnReason) { alert('请选择回单现象'); return; }
-    if (!photoData) { alert('请拍摄现场照片'); return; }
+
+    const hasPhoto = !!photoData;
+    const hasAttachments = remarkImages.length > 0;
+
+    if (!hasPhoto && !hasAttachments) {
+        alert('请拍摄现场照片，或者在备注中上传附件凭证。');
+        return;
+    }
     
     setIsSubmitting(true);
 
@@ -716,25 +819,30 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
         // --- 1. Automated AI Verification (Background) ---
         let finalVerification = null;
 
-        // If worker, run AI verification automatically
-        if (currentUser.role === 'WORKER') {
+        // If worker AND photo taken, run strict AI verification
+        if (currentUser.role === 'WORKER' && hasPhoto) {
              try {
                 // Background execution (awaiting it here makes it synchronous for the submission flow)
                 finalVerification = await performAICheck(photoData, completionTarget.serialCode);
+                
+                // STRICT BLOCKING: If verification fails, prevent submission
+                if (!finalVerification.match) {
+                     alert(`回单失败需重新拍照！\n\nAI核对未通过：${finalVerification.message}\n识别结果：${finalVerification.detected}`);
+                     setIsSubmitting(false);
+                     return;
+                }
              } catch (err: any) {
                 console.error("Auto Verify Failed", err);
-                // Fallback: don't block submission, but mark as failed or system error
-                finalVerification = { 
-                    match: false, 
-                    detected: "System Error", 
-                    message: "自动校验服务连接失败: " + (err.message || "未知错误")
-                };
+                // Fail safe: If verification service is down, block submission because we can't verify
+                alert("智能核验服务连接失败，无法验证照片。\n请检查网络后重试。");
+                setIsSubmitting(false);
+                return;
              }
         }
 
         // --- 2. Image Compression Logic ---
-        // Compress main photo
-        const compressedPhoto = await compressBase64Image(photoData);
+        // Compress main photo if exists
+        const compressedPhoto = photoData ? await compressBase64Image(photoData) : undefined;
         
         // Compress remark images
         const compressedRemarkImages = await Promise.all(
@@ -747,7 +855,9 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
         const isUpdate = completionTarget.status === 'COMPLETED';
         const actionDesc = isUpdate ? '修改了回单' : '完成回单';
 
-        // Determine Audit Status based on verification result
+        // Determine Audit Status based on verification result (if applicable)
+        // If no photo, auditStatus is technically undefined or maybe passed if we consider attachments valid. 
+        // Keeping it undefined if no photo for now, or could map to something else.
         const newAuditStatus = finalVerification ? (finalVerification.match ? 'PASSED' : 'FAILED') : undefined;
 
         // NEW LOGIC: Clean up old verification notes to avoid stacking
@@ -890,6 +1000,80 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
         </div>
       )}
 
+      {/* --- Batch Transfer Modal --- */}
+      {showBatchTransfer && (
+        <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-sm">
+            <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                <ArrowRightLeft size={20} className="text-blue-600" />
+                批量转派订单
+            </h3>
+            <p className="text-sm text-slate-500 mb-4">
+                将选中的 <span className="font-bold text-blue-600">{selectedOrderIds.size}</span> 个订单转派给新的班组/人员。
+            </p>
+
+            <div className="space-y-4">
+                {/* 1. District Selection */}
+                <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
+                        <Map size={16} /> 目标区域
+                    </label>
+                    <select 
+                        value={batchDistrict} 
+                        onChange={e => { setBatchDistrict(e.target.value); setBatchTeam(''); }}
+                        className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white"
+                    >
+                        <option value="" disabled>-- 选择区域 --</option>
+                        {DISTRICTS.map(d => (
+                            <option key={d} value={d}>{d}</option>
+                        ))}
+                    </select>
+                </div>
+
+                {/* 2. Team Selection */}
+                <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
+                        <Users size={16} /> 目标班组
+                    </label>
+                    <select 
+                        value={batchTeam} 
+                        onChange={e => setBatchTeam(e.target.value)}
+                        disabled={!batchDistrict}
+                        className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white disabled:bg-slate-100"
+                    >
+                        <option value="" disabled>
+                            {batchDistrict ? "-- 选择班组 --" : "-- 先选区域 --"}
+                        </option>
+                        {availableTeamsForBatch.map(t => (
+                            <option key={t} value={t}>{t}</option>
+                        ))}
+                    </select>
+                </div>
+
+                {/* 3. Name Input */}
+                <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
+                        <UserCircle size={16} /> 目标姓名 (可选)
+                    </label>
+                    <input
+                        type="text"
+                        placeholder="留空则仅更新班组"
+                        value={batchWorkerName}
+                        onChange={(e) => setBatchWorkerName(e.target.value)}
+                        className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    />
+                    <p className="text-[10px] text-slate-400 mt-1">若执行人员已筛选特定姓名，请务必填写以确保可见。</p>
+                </div>
+            </div>
+
+            <div className="flex gap-2 justify-end mt-6">
+              <Button variant="outline" onClick={() => setShowBatchTransfer(false)}>取消</Button>
+              <Button onClick={confirmBatchTransfer} disabled={!batchTeam}>确认转派</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* --- Completion Modal --- */}
       {completionTarget && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 overflow-y-auto">
@@ -932,7 +1116,10 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
               </div>
 
               <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-2">2. 备注 & 附件</label>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">
+                    2. 备注 & 附件 
+                    {!photoData && <span className="text-red-500 text-xs ml-2">(若无照片则必填附件)</span>}
+                </label>
                 <textarea 
                   className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100 disabled:text-slate-500 mb-2"
                   rows={3}
@@ -972,8 +1159,22 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
                 <div className="flex justify-between items-center mb-2">
                   <label className="block text-sm font-semibold text-slate-700">
                       3. 现场拍照 (时间+地点水印) 
-                      {canEditCompletion && <span className="text-red-500"> *</span>}
+                      <span className="text-slate-400 font-normal text-xs ml-2">(可选，若拍照则必须通过AI核对)</span>
                   </label>
+                  {canEditCompletion && photoData && (
+                    <button 
+                      onClick={verifyImageWithAI}
+                      disabled={isVerifying}
+                      className={`text-xs flex items-center gap-1 px-3 py-1.5 rounded-full border transition-all ${
+                          !verificationResult 
+                              ? 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100' // Neutral state
+                              : 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                      } disabled:opacity-50`}
+                      title="手动点击可提前核验，否则提交时将自动核验"
+                    >
+                      {isVerifying ? <span className="animate-pulse">AI 识别中...</span> : <><BrainCircuit size={14} /> {verificationResult ? '重新核对' : '智能核对 (可选)'}</>}
+                    </button>
+                  )}
                 </div>
 
                 {canEditCompletion && (
@@ -1024,6 +1225,16 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
                           </div>
                       )}
                     </div>
+                    {verificationResult && (
+                      <div className={`p-3 rounded-lg text-sm flex items-start gap-2 border ${verificationResult.match ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
+                        {verificationResult.match ? <CheckCircle2 size={18} className="shrink-0 mt-0.5" /> : <ScanLine size={18} className="shrink-0 mt-0.5" />}
+                        <div>
+                          <p className="font-bold">{verificationResult.match ? "匹配成功" : "匹配失败/未识别"}</p>
+                          <p>{verificationResult.message}</p>
+                          {!verificationResult.match && verificationResult.detected !== 'Error' && <p className="mt-1 text-xs opacity-80">识别结果: {verificationResult.detected}</p>}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ) : (
                     !canEditCompletion && !isCameraOpen && <div className="p-4 bg-slate-100 text-slate-500 text-center rounded-lg text-sm">无照片</div>
@@ -1066,10 +1277,10 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
               {canEditCompletion && (
                   <Button 
                     onClick={submitCompletion} 
-                    disabled={!returnReason || !photoData} 
+                    disabled={!returnReason || (!photoData && remarkImages.length === 0)} 
                     isLoading={isSubmitting}
                   >
-                    {isSubmitting && currentUser.role === 'WORKER' ? '正在智能核验并提交...' : '提交回单'}
+                    {isSubmitting && currentUser.role === 'WORKER' && !verificationResult ? '正在智能核验并提交...' : '提交回单'}
                   </Button>
               )}
             </div>
@@ -1157,6 +1368,19 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
             </div>
 
             <div className="flex flex-wrap gap-2">
+                {/* ADMIN Checkbox for Select All */}
+                {currentUser.role === 'ADMIN' && filteredOrders.length > 0 && (
+                  <label className="flex items-center gap-2 p-2 bg-white border border-slate-300 rounded-md text-sm cursor-pointer hover:bg-slate-50 min-w-[100px] justify-center select-none">
+                      <input 
+                          type="checkbox"
+                          checked={selectedOrderIds.size === filteredOrders.length}
+                          onChange={handleSelectAll}
+                          className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500"
+                      />
+                      <span>全选 ({filteredOrders.length})</span>
+                  </label>
+                )}
+
                 <div className="relative">
                    <select 
                         value={statusFilter} 
@@ -1206,9 +1430,16 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
           
           <div className="flex gap-3 w-full xl:w-auto mt-2 xl:mt-0">
              {currentUser.role === 'ADMIN' && (
-                <Button variant="outline" onClick={onReset} className="flex-1 xl:flex-none whitespace-nowrap">
-                  <RotateCcw size={16} className="mr-2" /> 导入新数据
-                </Button>
+                <>
+                  {selectedOrderIds.size > 0 && (
+                      <Button onClick={openBatchTransferModal} className="flex-1 xl:flex-none whitespace-nowrap bg-indigo-600 hover:bg-indigo-700">
+                         <ArrowRightLeft size={16} className="mr-2" /> 批量转派 ({selectedOrderIds.size})
+                      </Button>
+                  )}
+                  <Button variant="outline" onClick={onReset} className="flex-1 xl:flex-none whitespace-nowrap">
+                    <RotateCcw size={16} className="mr-2" /> 导入新数据
+                  </Button>
+                </>
              )}
              
              {onRefresh && (
@@ -1234,20 +1465,36 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {filteredOrders.map((order) => {
                 const isExpired = order.deadline ? new Date() > new Date(order.deadline) : false;
-                
+                const isSelected = selectedOrderIds.has(order.id);
+
                 return (
                   <div 
                     key={order.id} 
                     className={`bg-white rounded-lg border shadow-sm hover:shadow-md transition-all p-5 flex flex-col space-y-3 relative group 
-                      ${order.status === 'RECEIVED' ? 'border-blue-300 ring-1 ring-blue-100' : 'border-slate-200'}
+                      ${order.status === 'RECEIVED' ? 'border-blue-300 ring-1 ring-blue-100' : (isSelected ? 'border-blue-500 ring-2 ring-blue-200' : 'border-slate-200')}
                       ${isExpired ? 'opacity-80 bg-slate-50' : ''}
                     `}
+                    onClick={(e) => {
+                       // Allow selecting card by clicking anywhere if Admin, unless clicking button
+                       if (currentUser.role === 'ADMIN' && !(e.target as HTMLElement).closest('button')) {
+                           toggleSelection(order.id);
+                       }
+                    }}
                   >
+                    {/* Admin Checkbox Overlay */}
+                    {currentUser.role === 'ADMIN' && (
+                        <div className="absolute top-4 right-4 z-10">
+                            <div className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${isSelected ? 'bg-blue-600 border-blue-600' : 'bg-white border-slate-300'}`}>
+                                {isSelected && <Check size={14} className="text-white" />}
+                            </div>
+                        </div>
+                    )}
+
                     <div className="flex justify-between items-start border-b border-slate-100 pb-2">
                       <span className="bg-slate-800 text-white text-xs font-semibold px-2.5 py-0.5 rounded">
                         {order.taskName}
                       </span>
-                      <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-1 pr-6"> {/* Added padding right to avoid overlap with checkbox */}
                           {/* Audit Status Badge */}
                           {order.auditStatus === 'PASSED' && (
                               <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded bg-teal-100 text-teal-700 border border-teal-200">
@@ -1355,7 +1602,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
                             <div className="flex gap-2 w-full">
                               <Button 
                                 variant="secondary"
-                                onClick={() => openTransferModal(order)}
+                                onClick={(e) => { e.stopPropagation(); openTransferModal(order); }}
                                 className="flex-1 text-xs py-1"
                               >
                                 <ArrowRightLeft size={14} className="mr-1" /> 转派

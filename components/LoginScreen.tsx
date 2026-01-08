@@ -34,7 +34,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
 
   const handleLogin = () => {
     if (role === 'ADMIN') {
-        if (password !== 'Kezhi202615835') {
+        if (password !== '123') {
             alert('密码错误');
             return;
         }
