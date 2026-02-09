@@ -750,7 +750,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
       zip.file("订单列表.xlsx", excelBuffer);
 
       // Generate Zip Blob
-      const zipBlob = (await zip.generateAsync({ type: "blob" })) as unknown as Blob;
+      const zipBlob = await zip.generateAsync({ type: "blob" }) as Blob;
       
       const url = window.URL.createObjectURL(zipBlob);
       const anchor = document.createElement('a');
@@ -1574,7 +1574,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
                         <span className="text-xs text-slate-500 block uppercase tracking-wider mb-1">串码</span>
                         <span className="font-mono text-sm font-bold text-slate-700 break-all">
                           {currentUser.role === 'WORKER' && order.serialCode && order.serialCode.length >= 2 
-                            ? '**' + order.serialCode.slice(2) 
+                            ? order.serialCode.charAt(0) + '*' + order.serialCode.slice(2)
                             : order.serialCode}
                         </span>
                       </div>
