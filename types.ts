@@ -9,6 +9,7 @@ export interface Order {
   id: string;
   taskName: string;
   businessNo: string;
+  workOrderNo: string; // New field
   team: string;
   userName: string;
   serialCode: string;
@@ -39,6 +40,7 @@ export interface RawRow {
 export interface ColumnMapping {
   taskName: string;
   businessNo: string;
+  workOrderNo: string; // New field
   team: string;
   userName: string;
   serialCode: string;
@@ -49,6 +51,7 @@ export type ParsingStep = 'LOGIN' | 'UPLOAD' | 'MAPPING' | 'RESULTS';
 export const FIELD_LABELS: Record<keyof ColumnMapping, string> = {
   taskName: '任务名称',
   businessNo: '业务号',
+  workOrderNo: '工单号', // New label
   team: '班组',
   userName: '姓名',
   serialCode: '串码',

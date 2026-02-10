@@ -648,11 +648,12 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
       sheet.columns = [
         { header: '任务名称', key: 'taskName', width: 15 },
         { header: '业务号', key: 'businessNo', width: 20 },
+        { header: '工单号', key: 'workOrderNo', width: 20 }, // Added Work Order No
         { header: '班组', key: 'team', width: 15 },
         { header: '姓名', key: 'userName', width: 15 },
         { header: '串码', key: 'serialCode', width: 25 },
         { header: '状态', key: 'status', width: 10 },
-        { header: '审核状态', key: 'auditStatus', width: 12 }, // New Column
+        { header: '审核状态', key: 'auditStatus', width: 12 }, 
         { header: '截止时间', key: 'deadline', width: 20 },
         { header: '回单现象', key: 'returnReason', width: 20 },
         { header: '回单备注', key: 'completionRemark', width: 30 },
@@ -666,6 +667,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
         const row = sheet.addRow({
           taskName: order.taskName,
           businessNo: order.businessNo,
+          workOrderNo: order.workOrderNo || '', // Added
           team: order.team,
           userName: order.userName,
           serialCode: order.serialCode,
@@ -691,8 +693,8 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
                const base64Data = base64.replace(/^data:image\/[a-z]+;base64,/, "");
                const imageId = workbook.addImage({ base64: base64Data, extension: 'jpeg' });
                sheet.addImage(imageId, { 
-                   tl: { col: 10, row: row.number - 1 }, // Adjusted index due to new column
-                   br: { col: 11, row: row.number },
+                   tl: { col: 11, row: row.number - 1 }, // Adjusted index due to new column (+1)
+                   br: { col: 12, row: row.number },
                    editAs: 'oneCell' // Force embed in cell
                } as any);
                rowHeight = 150;
@@ -704,8 +706,8 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
           const base64Data = order.completionPhoto.replace(/^data:image\/[a-z]+;base64,/, "");
           const imageId = workbook.addImage({ base64: base64Data, extension: 'jpeg' });
           sheet.addImage(imageId, { 
-              tl: { col: 11, row: row.number - 1 }, 
-              br: { col: 12, row: row.number },
+              tl: { col: 12, row: row.number - 1 }, // Adjusted index (+1)
+              br: { col: 13, row: row.number },
               editAs: 'oneCell' // Force embed in cell
           } as any);
           rowHeight = 150;
@@ -1098,6 +1100,9 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
                     {canEditCompletion ? '填写/修改回单' : '回单详情'}
                  </h3>
                  <p className="text-xs text-slate-500">业务号: {completionTarget.businessNo}</p>
+                 {completionTarget.workOrderNo && (
+                    <p className="text-xs text-slate-500">工单号: {completionTarget.workOrderNo}</p>
+                 )}
                  {completionTarget.deadline && (
                     <p className={`text-xs mt-1 ${isTargetExpired ? 'text-red-500 font-bold' : 'text-amber-600'}`}>
                         截止时间: {new Date(completionTarget.deadline).toLocaleString()}
@@ -1374,7 +1379,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
               </div>
               <input
                 type="text"
-                placeholder="搜索任务名称、业务号..."
+                placeholder="搜索任务名称、业务号、工单号..."
                 className="pl-10 w-full p-2 bg-white border border-slate-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
@@ -1535,6 +1540,11 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
                       <div className="flex justify-between">
                          <span className="text-xs text-slate-500">业务号</span>
                          <span className="text-sm font-medium text-slate-800">{order.businessNo}</span>
+                      </div>
+                      {/* Work Order No Display */}
+                      <div className="flex justify-between">
+                         <span className="text-xs text-slate-500">工单号</span>
+                         <span className="text-sm font-medium text-slate-800">{order.workOrderNo || '-'}</span>
                       </div>
                       <div className="flex justify-between">
                          <span className="text-xs text-slate-500">班组</span>

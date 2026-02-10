@@ -21,6 +21,7 @@ export const MappingWizard: React.FC<MappingWizardProps> = ({ headers, previewDa
       const h = header.toString().toLowerCase();
       if (h.includes('任务') || h.includes('task')) newMapping.taskName = index.toString();
       if (h.includes('业务') || h.includes('business')) newMapping.businessNo = index.toString();
+      if (h.includes('工单') || h.includes('work') || h.includes('order')) newMapping.workOrderNo = index.toString(); // Auto-detect Work Order
       if (h.includes('班组') || h.includes('team')) newMapping.team = index.toString();
       if (h.includes('姓名') || h.includes('name')) newMapping.userName = index.toString();
       if (h.includes('串码') || h.includes('serial') || h.includes('code')) newMapping.serialCode = index.toString();
@@ -35,6 +36,7 @@ export const MappingWizard: React.FC<MappingWizardProps> = ({ headers, previewDa
   const isComplete = 
     mapping.taskName !== undefined && 
     mapping.businessNo !== undefined && 
+    mapping.workOrderNo !== undefined && 
     mapping.team !== undefined && 
     mapping.userName !== undefined && 
     mapping.serialCode !== undefined;
@@ -107,7 +109,7 @@ export const MappingWizard: React.FC<MappingWizardProps> = ({ headers, previewDa
              </Button>
              {!isComplete && (
                <p className="text-xs text-center text-amber-600 mt-2">
-                 请映射所有 5 个字段以继续。
+                 请映射所有 6 个字段以继续。
                </p>
              )}
           </div>

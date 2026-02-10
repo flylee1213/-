@@ -133,6 +133,7 @@ const App: React.FC = () => {
         id: generateId(),
         taskName,
         businessNo: getValue(mapping.businessNo),
+        workOrderNo: getValue(mapping.workOrderNo), // Extract new field
         team: getValue(mapping.team),
         userName: getValue(mapping.userName),
         serialCode: getValue(mapping.serialCode),
@@ -148,11 +149,16 @@ const App: React.FC = () => {
 
     if (error) {
       // Strict check for missing columns error
-      const isMissingDeadline = error.message && error.message.includes('deadline') && (error.message.includes('does not exist') || error.message.includes('find the'));
-      const isMissingRemarkImages = error.message && error.message.includes('remarkImages') && (error.message.includes('does not exist') || error.message.includes('find the'));
-      const isMissingAuditStatus = error.message && error.message.includes('auditStatus') && (error.message.includes('does not exist') || error.message.includes('find the'));
+      const checkMissing = (col: string) => 
+        error.message && error.message.includes(col) && 
+        (error.message.includes('does not exist') || error.message.includes('find the') || error.message.includes('schema cache'));
 
-      if (isMissingDeadline || isMissingRemarkImages || isMissingAuditStatus) {
+      const isMissingDeadline = checkMissing('deadline');
+      const isMissingRemarkImages = checkMissing('remarkImages');
+      const isMissingAuditStatus = checkMissing('auditStatus');
+      const isMissingWorkOrderNo = checkMissing('workOrderNo');
+
+      if (isMissingDeadline || isMissingRemarkImages || isMissingAuditStatus || isMissingWorkOrderNo) {
          console.warn("Database missing column, retrying without problematic fields...");
          
          const safeOrders = newOrders.map(o => {
@@ -160,6 +166,7 @@ const App: React.FC = () => {
             if (isMissingDeadline) delete safe.deadline;
             if (isMissingRemarkImages) delete safe.remarkImages;
             if (isMissingAuditStatus) delete safe.auditStatus;
+            if (isMissingWorkOrderNo) delete (safe as any).workOrderNo;
             return safe;
          });
          
@@ -170,8 +177,17 @@ const App: React.FC = () => {
             if (isMissingDeadline) missing.push('deadline');
             if (isMissingRemarkImages) missing.push('remarkImages');
             if (isMissingAuditStatus) missing.push('auditStatus');
+            if (isMissingWorkOrderNo) missing.push('workOrderNo');
+
+            const sqls = missing.map(c => {
+               if (c === 'workOrderNo') return 'ALTER TABLE orders ADD COLUMN "workOrderNo" TEXT;';
+               if (c === 'deadline') return 'ALTER TABLE orders ADD COLUMN deadline TIMESTAMPTZ;';
+               if (c === 'remarkImages') return 'ALTER TABLE orders ADD COLUMN "remarkImages" TEXT[];';
+               if (c === 'auditStatus') return 'ALTER TABLE orders ADD COLUMN "auditStatus" TEXT;';
+               return '';
+            }).join('\n');
             
-            alert(`部分成功：订单已导入，但字段 (${missing.join(', ')}) 未同步，因为数据库缺少对应列。\n\n请在 Supabase SQL 编辑器中运行 SQL 修复。`);
+            alert(`部分成功：订单已导入，但字段 (${missing.join(', ')}) 未同步，因为数据库缺少对应列。\n\n请在 Supabase SQL 编辑器中运行以下 SQL 修复:\n\n${sqls}`);
             setStep('RESULTS');
             setLoading(false);
             return;
@@ -240,7 +256,7 @@ const App: React.FC = () => {
                     return '';
                  }).join('\n');
 
-                 alert(`保存成功，但部分字段 (${missingCols.join(', ')}) 未同步。\n\n原因：数据库缺少对应列。\n请管理员运行以下 SQL 修复:\n\n${sqls}`);
+                 alert(`保存成功，但部分字段 (${missingCols.join(', ')}) 未同步。\n\n原因：数据库缺少对应列。\n请管理员运行 SQL 修复:\n\n${sqls}`);
                  return;
              }
          } else {
@@ -334,7 +350,7 @@ const App: React.FC = () => {
                 <h2 className="text-3xl font-bold text-slate-900 mb-4">导入并派发订单</h2>
                 <p className="text-slate-600">
                   上传 Excel 文件，系统将自动识别并拆分：<br/>
-                  <b>任务名称、业务号、班组、姓名、串码</b>
+                  <b>任务名称、业务号、工单号、班组、姓名、串码</b>
                 </p>
              </div>
              <DropZone onFileLoaded={handleFileLoaded} />
