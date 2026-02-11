@@ -74,7 +74,11 @@ const strictCompare = (target: string, candidate: string): { match: boolean; rea
 
   // 1. Length Check
   if (Math.abs(normTarget.length - normCand.length) > 1) {
-    return { match: false, reason: `长度不符 (目标:${normTarget.length}, 识别:${normCand.length})`, score: 0 };
+    return { 
+      match: false, 
+      reason: `位数不符 (订单:${normTarget.length}位, 识别:${normCand.length}位)。请检查是否拍错条码。`, 
+      score: 0 
+    };
   }
 
   let diffCount = 0;
@@ -89,11 +93,11 @@ const strictCompare = (target: string, candidate: string): { match: boolean; rea
       const allowed = ALLOWED_SWAPS[charT];
       if (allowed && allowed.includes(charC)) {
         diffCount += 0.5;
-        diffDetails.push(`Pos ${i+1}: '${charC}'视为'${charT}'`);
+        diffDetails.push(`第${i+1}位 '${charC}'≈'${charT}'`);
       } else {
         return { 
           match: false, 
-          reason: `字符不匹配: 第${i+1}位 识别为'${charC}'，应为'${charT}' (严禁匹配)`, 
+          reason: `关键字符不一致 (第${i+1}位)。订单需 '${charT}'，图片识别为 '${charC}'`, 
           score: 0 
         };
       }
@@ -101,12 +105,12 @@ const strictCompare = (target: string, candidate: string): { match: boolean; rea
   }
 
   if (diffCount > 1.0) {
-    return { match: false, reason: `模糊匹配过多 (${diffDetails.join(', ')})`, score: 0 };
+    return { match: false, reason: `字迹不够清晰，易混淆字符过多 (${diffDetails.join(', ')})`, score: 0 };
   }
 
   return { 
     match: true, 
-    reason: diffCount === 0 ? "完全精确匹配" : `模糊匹配成功: ${diffDetails.join(', ')}`, 
+    reason: diffCount === 0 ? "完全精确匹配" : `通过 (模糊匹配: ${diffDetails.join(', ')})`, 
     score: 1 
   };
 };
@@ -265,7 +269,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
       }
       
       if (candidates.length === 0) {
-        return { match: false, detected: "未检测到文字", message: "无法从图片中识别出任何有效的字母数字串。" };
+        return { match: false, detected: "未检测到文字", message: "识别失败请拍摄正确的终端图片" };
       }
       
       let bestMatch = { match: false, reason: "未找到匹配项", score: -1, detected: "" };
@@ -275,7 +279,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
           bestMatch = { ...result, detected: cand };
           break; 
         } else {
-          if (!result.reason.includes("长度") && bestMatch.score === -1) {
+          if (!result.reason.includes("位数") && bestMatch.score === -1) {
              bestMatch = { ...result, detected: cand };
           }
         }
@@ -284,7 +288,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
       return { 
           match: bestMatch.match, 
           detected: bestMatch.detected || candidates[0], 
-          message: bestMatch.match ? bestMatch.reason : `匹配失败: ${bestMatch.reason || "图片文字与订单不符"}` 
+          message: bestMatch.match ? bestMatch.reason : `核对失败: ${bestMatch.reason || "图片文字与订单严重不符"}` 
       };
   };
 
