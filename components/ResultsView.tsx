@@ -688,13 +688,21 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
         
         let rowHeight = 25;
 
+        // Helper to strip data URL prefix safely
+        const stripBase64Prefix = (str: string) => {
+            if (str.includes('base64,')) {
+                return str.split('base64,')[1];
+            }
+            return str;
+        };
+
         // 1. Embed Images (Existing logic)
         // Remark Images
         if (order.remarkImages && order.remarkImages.length > 0) {
            const base64 = order.remarkImages[0];
            if (base64) {
-               // Strip prefix if present (data:image/jpeg;base64,)
-               const base64Data = base64.replace(/^data:image\/[a-z]+;base64,/, "");
+               // Robust extraction
+               const base64Data = stripBase64Prefix(base64);
                const imageId = workbook.addImage({ base64: base64Data, extension: 'jpeg' });
                sheet.addImage(imageId, { 
                    tl: { col: 11, row: row.number - 1 }, // Adjusted index due to new column (+1)
@@ -706,8 +714,8 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
         }
         // Completion Photo
         if (order.completionPhoto) {
-          // Strip prefix
-          const base64Data = order.completionPhoto.replace(/^data:image\/[a-z]+;base64,/, "");
+          // Robust extraction
+          const base64Data = stripBase64Prefix(order.completionPhoto);
           const imageId = workbook.addImage({ base64: base64Data, extension: 'jpeg' });
           sheet.addImage(imageId, { 
               tl: { col: 12, row: row.number - 1 }, // Adjusted index (+1)
@@ -722,19 +730,23 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
             let extension = 'webm';
             let base64Data = order.completionAudio;
 
-            // Simple MIME detection
-            const match = order.completionAudio.match(/^data:audio\/([a-z0-9]+);base64,(.+)$/);
-            if (match) {
-                const mimeSub = match[1];
-                base64Data = match[2];
-                if (mimeSub === 'mpeg') extension = 'mp3';
-                else if (mimeSub === 'mp4') extension = 'm4a';
-                else extension = mimeSub;
+            // Robust extraction
+            if (order.completionAudio.includes('base64,')) {
+                const parts = order.completionAudio.split('base64,');
+                base64Data = parts[1];
+                
+                // Try to guess extension from header (MIME type)
+                const header = parts[0];
+                if (header.includes('audio/mpeg')) extension = 'mp3';
+                else if (header.includes('audio/mp4')) extension = 'm4a';
+                else if (header.includes('audio/wav')) extension = 'wav';
+                else if (header.includes('audio/ogg')) extension = 'ogg';
+                // Default to webm if unknown
             }
 
             const fileName = `${order.businessNo}_${order.userName}_录音.${extension}`;
             
-            // Add file to ZIP folder
+            // Add file to ZIP folder (JSZip requires clean base64 if base64:true)
             attachmentsFolder.file(fileName, base64Data, { base64: true });
 
             // Add Hyperlink to Excel Cell
@@ -768,7 +780,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
       window.URL.revokeObjectURL(url);
     } catch (e) {
       console.error("Export failed", e);
-      alert("导出失败，请重试。");
+      alert("导出失败，请重试。\n错误信息: " + (e instanceof Error ? e.message : String(e)));
     } finally {
       setIsExporting(false);
     }
