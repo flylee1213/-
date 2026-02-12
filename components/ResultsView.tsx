@@ -768,7 +768,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
       zip.file("订单列表.xlsx", excelBuffer);
 
       // Generate Zip Blob
-      const zipBlob = await zip.generateAsync({ type: "blob" }) as Blob;
+      const zipBlob = (await zip.generateAsync({ type: "blob" })) as unknown as Blob;
       
       const url = window.URL.createObjectURL(zipBlob);
       const anchor = document.createElement('a');
@@ -834,9 +834,10 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
 
     const hasPhoto = !!photoData;
     const hasAttachments = remarkImages.length > 0;
+    const hasAudio = !!audioData; // Check for audio
 
-    if (!hasPhoto && !hasAttachments) {
-        alert('请拍摄现场照片，或者在备注中上传附件凭证。');
+    if (!hasPhoto && !hasAttachments && !hasAudio) {
+        alert('请提供至少一项凭证：备注图片、现场照片或录音。');
         return;
     }
     
@@ -868,9 +869,9 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
                     return;
                  }
              } else {
-                 // No photo, has attachments
+                 // No photo, has attachments or audio
                  newAuditStatus = 'PENDING';
-                 finalVerification = { match: true, detected: '无', message: '无照片，已转人工审核' }; // Placeholder for history
+                 finalVerification = { match: true, detected: '无', message: '无现场照片(有其他凭证)，已转人工审核' }; // Placeholder for history
              }
         }
 
@@ -1153,7 +1154,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
               <div>
                 <label className="block text-sm font-semibold text-slate-700 mb-2">
                     2. 备注 & 附件 
-                    {!photoData && <span className="text-red-500 text-xs ml-2">(若无照片则必填附件)</span>}
+                    {!photoData && !audioData && <span className="text-red-500 text-xs ml-2">(若无照片/录音则必填)</span>}
                 </label>
                 <textarea 
                   className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100 disabled:text-slate-500 mb-2"
@@ -1312,7 +1313,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
               {canEditCompletion && (
                   <Button 
                     onClick={submitCompletion} 
-                    disabled={!returnReason || (!photoData && remarkImages.length === 0)} 
+                    disabled={!returnReason || (!photoData && remarkImages.length === 0 && !audioData)} 
                     isLoading={isSubmitting}
                   >
                     {isSubmitting && currentUser.role === 'WORKER' && !!photoData && !verificationResult ? '正在智能核验并提交...' : '提交回单'}
