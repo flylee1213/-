@@ -193,6 +193,7 @@ const callQwenVL = async (apiKey: string, base64Image: string, prompt: string) =
 export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, onReset, onRefresh, onUpdateOrder }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<OrderStatus | 'ALL'>('ALL');
+  const [completionDateFilter, setCompletionDateFilter] = useState<string>('');
   const [districtFilter, setDistrictFilter] = useState<string>('ALL');
   const [teamFilter, setTeamFilter] = useState<string>('ALL');
   const [isExporting, setIsExporting] = useState(false);
@@ -370,7 +371,9 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
       const matchesDistrict = districtFilter === 'ALL' || (order.team && isTeamInDistrict(order.team, districtFilter));
       const matchesTeam = teamFilter === 'ALL' || order.team === teamFilter;
       
-      return matchesSearch && matchesStatus && matchesDistrict && matchesTeam;
+      const matchesDate = !completionDateFilter || (order.completedAt && order.completedAt.startsWith(completionDateFilter));
+      
+      return matchesSearch && matchesStatus && matchesDistrict && matchesTeam && matchesDate;
     });
 
     return results.sort((a, b) => {
@@ -659,6 +662,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
         { header: '状态', key: 'status', width: 10 },
         { header: '审核状态', key: 'auditStatus', width: 12 }, 
         { header: '截止时间', key: 'deadline', width: 20 },
+        { header: '回单时间', key: 'completedAt', width: 20 },
         { header: '回单现象', key: 'returnReason', width: 20 },
         { header: '回单备注', key: 'completionRemark', width: 30 },
         { header: '备注图片', key: 'remarkImages', width: 15 },
@@ -678,6 +682,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
           status: getStatusLabel(order.status),
           auditStatus: order.auditStatus === 'PASSED' ? '审核通过' : (order.auditStatus === 'FAILED' ? '审核未通过' : (order.auditStatus === 'PENDING' ? '待审核' : '')),
           deadline: order.deadline ? new Date(order.deadline).toLocaleString() : '',
+          completedAt: order.completedAt ? new Date(order.completedAt).toLocaleString() : '',
           returnReason: order.returnReason || '',
           completionRemark: order.completionRemark || '',
           remarkImages: order.remarkImages && order.remarkImages.length > 0 ? `${order.remarkImages.length} 张图片` : '',
@@ -1432,6 +1437,25 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
                     <Filter size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                 </div>
 
+                {/* Completion Date Filter */}
+                <div className="relative">
+                    <input 
+                        type="date"
+                        value={completionDateFilter}
+                        onChange={e => setCompletionDateFilter(e.target.value)}
+                        className="pl-8 pr-2 py-2 border border-slate-300 rounded-md text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 min-w-[140px]"
+                    />
+                    <CalendarClock size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                    {completionDateFilter && (
+                        <button 
+                            onClick={() => setCompletionDateFilter('')}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                        >
+                            <X size={12} />
+                        </button>
+                    )}
+                </div>
+
                 {/* District Filter */}
                 <div className="relative">
                    <select 
@@ -1571,6 +1595,16 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
                          <span className="text-xs text-slate-500">处理人</span>
                          <span className="text-sm font-medium text-blue-600">{order.userName}</span>
                       </div>
+
+                      {/* Completion Time Display */}
+                      {order.completedAt && (
+                        <div className="flex justify-between items-center text-xs mt-1 pt-1 border-t border-slate-50">
+                          <span className="text-slate-500">回单时间</span>
+                          <span className="font-medium text-green-600">
+                            {new Date(order.completedAt).toLocaleString()}
+                          </span>
+                        </div>
+                      )}
                       
                       {/* Deadline Display */}
                       <div className="flex justify-between items-center text-xs mt-1 pt-1 border-t border-slate-50 min-h-[24px]">
