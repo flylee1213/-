@@ -138,7 +138,7 @@ const App: React.FC = () => {
         userName: getValue(mapping.userName),
         serialCode: getValue(mapping.serialCode),
         status: 'DISPATCHED',
-        history: [`管理员导入于 ${new Date().toLocaleString()}`],
+        history: [`客支导入于 ${new Date().toLocaleString()}`],
         deadline: deadline, // Add deadline to order
         // DB columns match JSON keys exactly due to our quote strategy in SQL
       } as Order;
@@ -187,7 +187,7 @@ const App: React.FC = () => {
                return '';
             }).join('\n');
             
-            alert(`部分成功：订单已导入，但字段 (${missing.join(', ')}) 未同步，因为数据库缺少对应列。\n\n请在 Supabase SQL 编辑器中运行以下 SQL 修复:\n\n${sqls}`);
+            alert(`部分成功：工单已导入，但字段 (${missing.join(', ')}) 未同步，因为数据库缺少对应列。\n\n请在 Supabase SQL 编辑器中运行以下 SQL 修复:\n\n${sqls}`);
             setStep('RESULTS');
             setLoading(false);
             return;
@@ -200,7 +200,7 @@ const App: React.FC = () => {
       alert(`云端同步失败！\n\n原因: ${error.message}\n\n系统已切换至本地演示模式，数据仅在当前会话有效。`);
       setStep('RESULTS');
     } else {
-      alert(`成功导入 ${newOrders.length} 条订单！` + (deadline ? ` 截止时间: ${new Date(deadline).toLocaleString()}` : ''));
+      alert(`成功导入 ${newOrders.length} 条工单！` + (deadline ? ` 截止时间: ${new Date(deadline).toLocaleString()}` : ''));
       setStep('RESULTS');
     }
     setLoading(false);
@@ -256,12 +256,12 @@ const App: React.FC = () => {
                     return '';
                  }).join('\n');
 
-                 alert(`保存成功，但部分字段 (${missingCols.join(', ')}) 未同步。\n\n原因：数据库缺少对应列。\n请管理员运行 SQL 修复:\n\n${sqls}`);
+                 alert(`保存成功，但部分字段 (${missingCols.join(', ')}) 未同步。\n\n原因：数据库缺少对应列。\n请客支运行 SQL 修复:\n\n${sqls}`);
                  return;
              }
          } else {
              // If we stripped everything, fail gracefully
-             alert(`操作失败：数据库缺少列 (${missingCols.join(', ')})。\n请管理员运行 SQL 修复。`);
+             alert(`操作失败：数据库缺少列 (${missingCols.join(', ')})。\n请客支运行 SQL 修复。`);
              fetchOrders(); // Revert
              return;
          }
@@ -293,7 +293,7 @@ const App: React.FC = () => {
               <Layout size={20} />
             </div>
             <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-700 to-blue-500">
-              Excel 订单系统 (云端版)
+              终端稽核派单系统
             </h1>
           </div>
           
@@ -347,7 +347,7 @@ const App: React.FC = () => {
         {step === 'UPLOAD' && user?.role === 'ADMIN' && (
           <div className="flex flex-col items-center justify-center min-h-[60vh] animate-in fade-in duration-500">
              <div className="text-center mb-8 max-w-lg">
-                <h2 className="text-3xl font-bold text-slate-900 mb-4">导入并派发订单</h2>
+                <h2 className="text-3xl font-bold text-slate-900 mb-4">导入并派发工单</h2>
                 <p className="text-slate-600">
                   上传 Excel 文件，系统将自动识别并拆分：<br/>
                   <b>任务名称、业务号、工单号、班组、姓名、串码</b>
@@ -356,7 +356,7 @@ const App: React.FC = () => {
              <DropZone onFileLoaded={handleFileLoaded} />
              {orders.length > 0 && (
                <button onClick={() => setStep('RESULTS')} className="mt-8 text-blue-600 hover:underline">
-                 跳过上传，查看现有 {orders.length} 个订单 &rarr;
+                 跳过上传，查看现有 {orders.length} 个工单 &rarr;
                </button>
              )}
           </div>

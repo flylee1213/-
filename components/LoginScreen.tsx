@@ -65,7 +65,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
 
     onLogin({
       role,
-      name: role === 'ADMIN' ? '管理员' : name.trim(),
+      name: role === 'ADMIN' ? '客支' : name.trim(),
       team: role === 'WORKER' ? team : undefined // Pass the specific team
     });
   };
@@ -74,7 +74,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
     <div className="flex flex-col items-center justify-center min-h-[60vh] animate-in fade-in duration-500">
       <div className="bg-white p-8 rounded-xl shadow-lg border border-slate-200 w-full max-w-md">
         <div className="text-center mb-8">
-          <h2 className="text-2xl font-bold text-slate-900">欢迎使用订单系统</h2>
+          <h2 className="text-2xl font-bold text-slate-900">欢迎使用终端稽核派单系统</h2>
           <p className="text-slate-500 mt-2">请选择您的身份以继续</p>
         </div>
 
@@ -89,7 +89,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
               }`}
             >
               <Shield size={24} />
-              <span className="font-semibold">管理员/派发</span>
+              <span className="font-semibold">客支</span>
             </button>
             <button
               onClick={() => setRole('WORKER')}
@@ -100,7 +100,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
               }`}
             >
               <UserIcon size={24} />
-              <span className="font-semibold">执行人员/接收</span>
+              <span className="font-semibold">装维</span>
             </button>
           </div>
 
@@ -109,11 +109,11 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
             <div className="space-y-4 animate-in slide-in-from-top-2">
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
-                    <Lock size={16} /> 管理员密码
+                    <Lock size={16} /> 客支密码
                 </label>
                 <input
                     type="password"
-                    placeholder="请输入管理员密码"
+                    placeholder="请输入客支密码"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"

@@ -76,7 +76,7 @@ const strictCompare = (target: string, candidate: string): { match: boolean; rea
   if (Math.abs(normTarget.length - normCand.length) > 1) {
     return { 
       match: false, 
-      reason: `位数不符 (订单:${normTarget.length}位, 识别:${normCand.length}位)。请检查是否拍错条码。`, 
+      reason: `位数不符 (工单:${normTarget.length}位, 识别:${normCand.length}位)。请检查是否拍错条码。`, 
       score: 0 
     };
   }
@@ -97,7 +97,7 @@ const strictCompare = (target: string, candidate: string): { match: boolean; rea
       } else {
         return { 
           match: false, 
-          reason: `关键字符不一致 (第${i+1}位)。订单需 '${charT}'，图片识别为 '${charC}'`, 
+          reason: `关键字符不一致 (第${i+1}位)。工单需 '${charT}'，图片识别为 '${charC}'`, 
           score: 0 
         };
       }
@@ -289,7 +289,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
       return { 
           match: bestMatch.match, 
           detected: bestMatch.detected || candidates[0], 
-          message: bestMatch.match ? bestMatch.reason : `核对失败: ${bestMatch.reason || "图片文字与订单严重不符"}` 
+          message: bestMatch.match ? bestMatch.reason : `核对失败: ${bestMatch.reason || "图片文字与工单严重不符"}` 
       };
   };
 
@@ -437,10 +437,10 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
         await Promise.all(updates);
         setSelectedOrderIds(new Set());
         setShowBatchTransfer(false);
-        alert(`成功转派 ${updates.length} 个订单。`);
+        alert(`成功转派 ${updates.length} 个工单。`);
     } catch (e) {
         console.error("Batch transfer error", e);
-        alert("批量转派过程中发生错误，部分订单可能未更新。");
+        alert("批量转派过程中发生错误，部分工单可能未更新。");
     } finally {
         setIsRefreshing(false);
     }
@@ -770,7 +770,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
 
       // Generate Excel Buffer
       const excelBuffer = await workbook.xlsx.writeBuffer();
-      zip.file("订单列表.xlsx", excelBuffer);
+      zip.file("工单列表.xlsx", excelBuffer);
 
       // Generate Zip Blob
       const zipBlob = (await zip.generateAsync({ type: "blob" })) as unknown as Blob;
@@ -778,7 +778,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
       const url = window.URL.createObjectURL(zipBlob);
       const anchor = document.createElement('a');
       anchor.href = url;
-      anchor.download = `订单导出(含录音)_${currentUser.name}_${new Date().toISOString().slice(0,10)}.zip`;
+      anchor.download = `工单导出(含录音)_${currentUser.name}_${new Date().toISOString().slice(0,10)}.zip`;
       document.body.appendChild(anchor);
       anchor.click();
       document.body.removeChild(anchor);
@@ -793,14 +793,14 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
 
   const handleReceive = (order: Order) => {
     if (order.deadline && new Date() > new Date(order.deadline)) {
-        alert("该订单已过截止时间，无法操作。");
+        alert("该工单已过截止时间，无法操作。");
         return;
     }
     const currentHistory = Array.isArray(order.history) ? order.history : [];
     onUpdateOrder(order.id, {
       status: 'RECEIVED',
       receivedAt: new Date().toISOString(),
-      history: [...currentHistory, `${currentUser.name} 于 ${new Date().toLocaleString()} 接收订单`]
+      history: [...currentHistory, `${currentUser.name} 于 ${new Date().toLocaleString()} 接收工单`]
     });
   };
 
@@ -830,7 +830,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
   const submitCompletion = async () => {
     if (!completionTarget) return;
     if (currentUser.role === 'WORKER' && completionTarget.deadline && new Date() > new Date(completionTarget.deadline)) {
-        alert("该订单已过截止时间，无法提交或修改。");
+        alert("该工单已过截止时间，无法提交或修改。");
         closeCompletionModal();
         return;
     }
@@ -1044,10 +1044,10 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
           <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-sm">
             <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
                 <ArrowRightLeft size={20} className="text-blue-600" />
-                批量转派订单
+                批量转派工单
             </h3>
             <p className="text-sm text-slate-500 mb-4">
-                将选中的 <span className="font-bold text-blue-600">{selectedOrderIds.size}</span> 个订单转派给新的班组/人员。
+                将选中的 <span className="font-bold text-blue-600">{selectedOrderIds.size}</span> 个工单转派给新的班组/人员。
             </p>
 
             <div className="space-y-4">
@@ -1100,7 +1100,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
                         onChange={(e) => setBatchWorkerName(e.target.value)}
                         className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                     />
-                    <p className="text-[10px] text-slate-400 mt-1">若执行人员已筛选特定姓名，请务必填写以确保可见。</p>
+                    <p className="text-[10px] text-slate-400 mt-1">若装维已筛选特定姓名，请务必填写以确保可见。</p>
                 </div>
             </div>
 
@@ -1333,7 +1333,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
       {transferTarget && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-sm">
-            <h3 className="text-lg font-bold mb-4">转派订单</h3>
+            <h3 className="text-lg font-bold mb-4">转派工单</h3>
             <p className="text-sm text-slate-500 mb-4">当前处理人: <span className="font-semibold text-slate-800">{transferTarget.currentName}</span></p>
             <div className="mb-4">
               <label className="block text-sm font-medium mb-1">转派给 (姓名)</label>
@@ -1380,7 +1380,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex items-center justify-between">
           <div>
-            <p className="text-sm text-slate-500 font-medium">我的订单</p>
+            <p className="text-sm text-slate-500 font-medium">我的工单</p>
             <h2 className="text-3xl font-bold text-slate-800">{filteredOrders.length}</h2>
           </div>
           <div className="h-12 w-12 rounded-full bg-blue-100 flex items-center justify-center text-blue-600">
@@ -1704,8 +1704,8 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
                <Search size={48} className="mb-4 opacity-20" />
                <p>
                  {currentUser.role === 'WORKER' 
-                   ? `未找到属于 "${currentUser.name}" 的订单` 
-                   : `未找到匹配 "${searchTerm}" 的订单`}
+                   ? `未找到属于 "${currentUser.name}" 的工单` 
+                   : `未找到匹配 "${searchTerm}" 的工单`}
                </p>
                {(statusFilter !== 'ALL' || districtFilter !== 'ALL' || teamFilter !== 'ALL') && (
                    <p className="mt-2 text-xs text-slate-500">
@@ -1718,7 +1718,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ orders, currentUser, o
         
         <div className="p-3 bg-white border-t border-slate-200 text-xs text-slate-500 flex justify-between">
            <span>显示 {filteredOrders.length} / {orders.length} 条记录</span>
-           <span>当前用户: {currentUser.name} ({currentUser.role === 'ADMIN' ? '管理员' : '员工'})</span>
+           <span>当前用户: {currentUser.name} ({currentUser.role === 'ADMIN' ? '客支' : '员工'})</span>
         </div>
       </div>
     </div>

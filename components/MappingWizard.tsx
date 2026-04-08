@@ -94,8 +94,8 @@ export const MappingWizard: React.FC<MappingWizardProps> = ({ headers, previewDa
              />
              <p className="text-xs text-amber-700 mt-2 leading-relaxed">
                若设置此项，超过该时间后：<br/>
-               1. 执行人员将<strong>无法看到</strong>该批次订单。<br/>
-               2. 执行人员将<strong>无法提交或修改</strong>该批次订单。
+               1. 装维将<strong>无法看到</strong>该批次工单。<br/>
+               2. 装维将<strong>无法提交或修改</strong>该批次工单。
              </p>
           </div>
           
@@ -105,7 +105,7 @@ export const MappingWizard: React.FC<MappingWizardProps> = ({ headers, previewDa
                 disabled={!isComplete}
                 className="w-full justify-center py-3 text-base"
              >
-                生成订单 <ArrowRight size={18} className="ml-2" />
+                生成工单 <ArrowRight size={18} className="ml-2" />
              </Button>
              {!isComplete && (
                <p className="text-xs text-center text-amber-600 mt-2">
